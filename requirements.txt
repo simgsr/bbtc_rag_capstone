@@ -10,6 +10,7 @@ langchain
 langchain-chroma
 langchain-groq
 langchain-ollama
+sentence-transformers
 ollama
 pandas
 python-dotenv

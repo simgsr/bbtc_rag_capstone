@@ -32,8 +32,7 @@ _SYSTEM = (
     "Schema: sermons(sermon_id, filename, url, speaker, date, series, bible_book, "
     "primary_verse, language, file_type, year, status). "
     "When the user asks for a chart, plot, or visualisation, use matplotlib_tool. "
-    "Choose the best chart_name from: sermons_per_pastor_by_year, bible_book_coverage, "
-    "preaching_load_trend, series_volume_by_year, scatter_pastor_book_date. "
+    "Choose the best chart_name from: sermons_per_speaker, sermons_per_year, top_bible_books. "
     "Return the file path exactly as returned by the tool. "
     "Always show SQL used. Format answers clearly."
 )

@@ -58,7 +58,7 @@ BBTC Website → BBTCScraper → data/staging/ (raw files)
 | Component | File | Purpose |
 |---|---|---|
 | `SermonRegistry` | `src/storage/sqlite_store.py` | SQLite CRUD; tracks ingestion status |
-| `SermonVectorStore` | `src/storage/chroma_store.py` | ChromaDB with Ollama embeddings + pass-through reranker |
+| `SermonVectorStore` | `src/storage/chroma_store.py` | ChromaDB with Ollama embeddings + CrossEncoder reranker |
 | `BBTCScraper` | `src/scraper/bbtc_scraper.py` | Cloudflare-bypass scraper; downloads + text-extracts PDFs/PPTX/DOCX |
 | `MetadataExtractor` | `src/ingestion/metadata_extractor.py` | LLM extracts speaker/date/series/verse from first 500 chars |
 | `get_llm()` | `src/llm.py` | Factory returning Groq/Gemini/Ollama LangChain chat model |
@@ -69,7 +69,7 @@ BBTC Website → BBTCScraper → data/staging/ (raw files)
 
 - **`sql_query_tool`** — executes arbitrary SQL against `data/sermons.db`; use for counts, stats, date lookups
 - **`search_sermons_tool`** — semantic search over ChromaDB `sermon_collection`; use for "what was said about X"
-- **`matplotlib_tool`** — generates PNG charts from predefined chart names; currently uses stub data
+- **`matplotlib_tool`** — generates PNG charts from live SQLite data; supports `sermons_per_speaker`, `sermons_per_year`, `top_bible_books`
 
 ### SQLite Schema
 
@@ -108,8 +108,8 @@ Embeddings default to `nomic-embed-text` via Ollama; falls back to ChromaDB's bu
 ## Notable Quirks
 
 - `MetadataExtractor` uses Groq by default and falls back to Ollama (`llama3.2:3b`) on rate-limit errors (HTTP 429).
-- The `Reranker` in `src/storage/reranker.py` is a pass-through stub — it does not actually rerank.
-- `matplotlib_tool` uses hardcoded dummy data; it does not query the database dynamically.
+- The `Reranker` in `src/storage/reranker.py` uses `cross-encoder/ms-marco-MiniLM-L-6-v2` for real CrossEncoder reranking.
+- `matplotlib_tool` queries live data from SQLite for three chart types: `sermons_per_speaker`, `sermons_per_year`, `top_bible_books`.
 - The scraper uses `cloudscraper` to bypass Cloudflare protection on the BBTC website.
 - All imports of `langchain_google_genai` happen after `GEMINI_API_KEY` is remapped to `GOOGLE_API_KEY` in `app.py`.
 - Dagster creates temporary `DAGSTER_HOME` directories (`.tmp_dagster_home_*`) in the project root; these can be ignored or cleaned up.
