@@ -80,7 +80,11 @@ def make_matplotlib_tool(registry):
 
         plt.tight_layout()
         file_path = os.path.join("/tmp", f"bbtc_chart_{uuid.uuid4().hex[:8]}.png")
-        fig.savefig(file_path)
+        try:
+            fig.savefig(file_path)
+        except Exception as e:
+            plt.close(fig)
+            return f"Chart save error: {e}"
         plt.close(fig)
         return file_path
 
