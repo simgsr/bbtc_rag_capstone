@@ -81,3 +81,13 @@ def test_tool_default_no_filters():
     tool.invoke({"query": "grace"})
     _, kwargs = store.search_sermons.call_args
     assert kwargs.get("where") is None
+
+
+def test_tool_passes_combined_year_and_speaker_filter():
+    store = _make_store(_sample_results())
+    tool = make_vector_tool(store)
+    tool.invoke({"query": "grace", "year": 2024, "speaker": "Pastor John"})
+    _, kwargs = store.search_sermons.call_args
+    assert kwargs.get("where") == {
+        "$and": [{"year": {"$eq": 2024}}, {"speaker": {"$eq": "Pastor John"}}]
+    }

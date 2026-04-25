@@ -24,10 +24,10 @@ def make_vector_tool(vector_store: SermonVectorStore):
 
         parts = []
         for res in results:
-            m = res["metadata"]
+            m = res.get("metadata") or {}
             header = (
-                f"[{m.get('filename', 'unknown')} | {m.get('speaker', 'Unknown')} "
-                f"| {m.get('date', '')} | {m.get('primary_verse', '')}]"
+                f"[{m.get('filename') or 'unknown'} | {m.get('speaker') or 'Unknown'} "
+                f"| {m.get('date') or ''} | {m.get('primary_verse') or ''}]"
             )
             parts.append(f"{header}\n{res['content']}")
 
