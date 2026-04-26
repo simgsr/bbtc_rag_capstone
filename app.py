@@ -337,11 +337,22 @@ with gr.Blocks() as demo:
         history.append({"role": "assistant", "content": content})
         return history
 
+    disable_submit = lambda: gr.update(value="⏳ Thinking...", interactive=False)
+    enable_submit = lambda: gr.update(value="🚀 Send", interactive=True)
+
     msg.submit(user_msg, [msg, chatbot], [msg, chatbot], queue=True).then(
+        disable_submit, None, submit
+    ).then(
         bot_msg, [chatbot, provider_radio], chatbot
+    ).then(
+        enable_submit, None, submit
     )
     submit.click(user_msg, [msg, chatbot], [msg, chatbot], queue=True).then(
+        disable_submit, None, submit
+    ).then(
         bot_msg, [chatbot, provider_radio], chatbot
+    ).then(
+        enable_submit, None, submit
     )
     clear.click(lambda: [], None, chatbot, queue=False)
 
