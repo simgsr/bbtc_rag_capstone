@@ -81,7 +81,13 @@ def respond(message, history, provider):
         if turn["role"] == "user":
             messages.append(HumanMessage(content=turn["content"]))
         else:
-            messages.append(AIMessage(content=turn["content"]))
+            content = turn["content"]
+            if isinstance(content, list):
+                content = " ".join(
+                    block.get("text", "") for block in content
+                    if block.get("type") == "text"
+                )
+            messages.append(AIMessage(content=content))
     
     messages.append(HumanMessage(content=message))
     
@@ -292,6 +298,9 @@ with gr.Blocks() as demo:
 
         chat_history = history[:-1]
         bot_message = respond(user_message, chat_history, provider)
+
+        if not isinstance(bot_message, str):
+            bot_message = str(bot_message)
 
         text, chart_path = extract_chart_path(bot_message)
         if chart_path:
