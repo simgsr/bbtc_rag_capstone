@@ -58,11 +58,13 @@ try:
 except Exception as e:
     print(f"⚠️ Initialization warning: {e}")
     agent = None
+    registry = None
 
-try:
-    _stats_bar_html = render_stats_bar(fetch_archive_stats(registry.db_path))
-except Exception:
-    _stats_bar_html = render_stats_bar(None)
+_stats_bar_html = (
+    render_stats_bar(fetch_archive_stats(registry.db_path))
+    if registry is not None
+    else render_stats_bar(None)
+)
 
 def respond(message, history, provider):
     # Dynamic LLM selection
