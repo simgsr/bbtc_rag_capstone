@@ -213,6 +213,28 @@ footer {visibility: hidden}
     color: #94a3b8;
     font-size: 0.875rem;
 }
+
+@media (max-width: 768px) {
+    .gradio-container {
+        max-width: 100% !important;
+    }
+    .sidebar {
+        border-right: none !important;
+        border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
+    }
+    .stats-bar {
+        flex-direction: column;
+        gap: 6px;
+        align-items: flex-start;
+    }
+    #title-text h1 {
+        font-size: 1.8rem;
+    }
+    .message-user, .message-assistant {
+        font-size: 0.9rem;
+        padding: 10px 12px !important;
+    }
+}
 """
 
 with gr.Blocks() as demo:
@@ -251,11 +273,16 @@ with gr.Blocks() as demo:
             with gr.Row():
                 gr.Examples(
                     examples=[
-                        ["List the top 3 verses preached each year."],
-                        ["Which bible verses were preached most often in 2024?"],
-                        ["Summarize the 'Bigger Fire' sermon and its key takeaways."],
-                        ["Create a bar chart of how many sermons each speaker gave."],
-                        ["Who spoke on the most recent Sunday in the database?"]
+                        ["How many sermons are in the archive and who are the top 5 speakers?"],
+                        ["Show a bar chart of how many sermons were preached each year"],
+                        ["Show a bar chart of the top 10 most-preached Bible books"],
+                        ["Create a bar chart of sermon count per speaker"],
+                        ["What sermons have been preached on the book of Romans?"],
+                        ["Find sermons about forgiveness, grace, and redemption"],
+                        ["What have our pastors said about faith during trials and suffering?"],
+                        ["Find sermons that cover John 3:16 or the topic of eternal life"],
+                        ["Compare what different speakers have said about the Holy Spirit"],
+                        ["What was the most recent sermon and what were its key points?"],
                     ],
                     inputs=msg,
                     label="⚡ Quick Inquiries"
