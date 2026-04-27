@@ -1,0 +1,54 @@
+/* Pulse Animation for Typing Indicator */
+.pulse-dot {
+    width: 6px;
+    height: 6px;
+    background-color: #3b82f6;
+    border-radius: 50%;
+    animation: pulse 1.5s infinite ease-in-out;
+}
+
+@keyframes pulse {
+    0%, 100% { transform: scale(0.8); opacity: 0.5; }
+    50% { transform: scale(1.2); opacity: 1; }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: #1e293b;
+    border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #334155;
+}
+
+/* Chat Transitions */
+.message-enter {
+    opacity: 0;
+    transform: translateY(10px);
+}
+.message-enter-active {
+    opacity: 1;
+    transform: translateY(0);
+    transition: all 0.3s ease-out;
+}
+
+/* Markdown styling for chat */
+.chat-content strong {
+    color: #60a5fa;
+    font-weight: 600;
+}
+
+.user-message {
+    background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+}
+
+.bot-message {
+    background: #0f172a;
+    border: 1px solid #1e293b;
+}

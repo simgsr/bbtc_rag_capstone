@@ -10,6 +10,8 @@ langchain
 langchain-chroma
 langchain-groq
 langchain-ollama
+langchain-google-genai
+langchain-community
 sentence-transformers
 ollama
 pandas
@@ -18,3 +20,6 @@ gradio
 groq
 matplotlib
 langgraph
+flask
+flask-session
+gunicorn

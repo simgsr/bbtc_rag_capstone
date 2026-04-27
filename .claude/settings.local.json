@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(python3 -c \"import sys; print\\(sys.version\\)\")",
+      "Bash(git -C /Users/simgsr/Documents/structure_db_rag status --short)",
+      "Bash(mkdir -p /Users/simgsr/Documents/structure_db_rag/deploy/backend/api /Users/simgsr/Documents/structure_db_rag/deploy/backend/scripts /Users/simgsr/Documents/structure_db_rag/deploy/backend/tests)",
+      "Bash(touch /Users/simgsr/Documents/structure_db_rag/deploy/backend/api/__init__.py /Users/simgsr/Documents/structure_db_rag/deploy/backend/scripts/__init__.py /Users/simgsr/Documents/structure_db_rag/deploy/backend/tests/__init__.py)",
+      "Bash(/Users/simgsr/Documents/structure_db_rag/.venv/bin/pip install *)",
+      "Bash(/Users/simgsr/Documents/structure_db_rag/.venv/bin/python3 *)",
+      "Bash(git -C /Users/simgsr/Documents/structure_db_rag add deploy/)",
+      "Bash(git *)",
+      "Bash(.venv/bin/pip show *)",
+      "Bash(.venv/bin/pip index *)",
+      "Bash(.venv/bin/pip install *)",
+      "Bash(.venv/bin/python3 *)",
+      "Bash(grep -v \"^commit\\\\|^Author\\\\|^Date\\\\|^$\\\\|^    \")",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 *)",
+      "Bash(/Users/simgsr/Documents/structure_db_rag/.venv/bin/python -c \"from sentence_transformers import CrossEncoder; print\\('OK'\\)\")",
+      "Bash(pip install *)",
+      "Bash(/Users/simgsr/Documents/structure_db_rag/.venv/bin/python *)",
+      "Bash(grep *)",
+      "Bash(python *)",
+      "Bash(curl -s http://localhost:7860)",
+      "Bash(pytest tests/ -v)"
+    ]
+  }
+}
