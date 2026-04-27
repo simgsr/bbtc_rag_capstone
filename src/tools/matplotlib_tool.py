@@ -17,6 +17,7 @@ def make_matplotlib_tool(registry):
         - 'sermons_per_speaker' — bar chart of sermon count per speaker (top 10)
         - 'sermons_per_year' — bar chart of sermon count per year
         - 'top_bible_books' — bar chart of most-preached Bible books (top 10)
+        - 'sermons_scatter' — bubble chart of sermon count by speaker and year
         Returns the file path to the saved PNG."""
         fig, ax = plt.subplots(figsize=(10, 6))
 
@@ -67,11 +68,39 @@ def make_matplotlib_tool(registry):
                     ax.set_title("Top 10 Preached Bible Books")
                     ax.invert_yaxis()
 
+                elif chart_name == "sermons_scatter":
+                    rows = conn.execute(
+                        "SELECT year, speaker, COUNT(*) as n FROM sermons "
+                        "WHERE year IS NOT NULL AND speaker IS NOT NULL AND speaker != '' "
+                        "GROUP BY year, speaker ORDER BY year"
+                    ).fetchall()
+                    if not rows:
+                        plt.close(fig)
+                        return "No sermon data found."
+                    years = [r[0] for r in rows]
+                    speakers = [r[1] for r in rows]
+                    counts = [r[2] for r in rows]
+                    unique_speakers = sorted(set(speakers))
+                    speaker_idx = {s: i for i, s in enumerate(unique_speakers)}
+                    y_vals = [speaker_idx[s] for s in speakers]
+                    n_speakers = len(unique_speakers)
+                    fig.set_figheight(max(6, n_speakers * 0.5))
+                    ax.scatter(years, y_vals, s=[c * 40 for c in counts], alpha=0.6, color="#f59e0b")
+                    ax.set_yticks(range(n_speakers))
+                    ax.set_yticklabels(unique_speakers, fontsize=8)
+                    ax.set_xlabel("Year")
+                    ax.set_title("Sermon Count by Speaker and Year")
+                    ax.annotate(
+                        "Bubble size = sermon count",
+                        xy=(0.01, 0.01), xycoords="axes fraction", fontsize=8, color="gray"
+                    )
+
                 else:
                     plt.close(fig)
                     return (
                         f"Unknown chart '{chart_name}'. "
-                        "Valid options: sermons_per_speaker, sermons_per_year, top_bible_books."
+                        "Valid options: sermons_per_speaker, sermons_per_year, "
+                        "top_bible_books, sermons_scatter."
                     )
 
         except Exception as e:
