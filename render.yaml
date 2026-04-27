@@ -7,12 +7,6 @@ services:
     envVars:
       - key: PORT
         value: 7860
-      - key: GROQ_API_KEY
-        sync: false
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: GOOGLE_API_KEY
-        sync: false
     disk:
       name: sermon-data
       mountPath: /app/data
