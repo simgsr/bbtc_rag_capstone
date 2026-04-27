@@ -81,7 +81,6 @@ def sermon_ingestion_summary(context: AssetExecutionContext):
         scraper.scrape_year(year)
     
     # 2. Group files and process as sermon units
-    from src.ingestion.file_classifier import classify_file
     from src.ingestion.filename_parser import parse_cell_guide_filename
     from src.ingestion.sermon_grouper import group_sermon_files
     from src.ingestion.speaker_from_filename import speaker_from_filename
