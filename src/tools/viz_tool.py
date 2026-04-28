@@ -1,12 +1,63 @@
 import plotly.express as px
+import plotly.graph_objects as go
 import plotly.io as pio
 import sqlite3
 import os
 import uuid
 from langchain_core.tools import tool
 
-# Set dark theme by default for Plotly
 pio.templates.default = "plotly_dark"
+
+_FONT = "'Source Code Pro', 'Courier New', monospace"
+_BG = "rgba(10, 15, 30, 0.0)"
+_PLOT_BG = "rgba(15, 22, 42, 0.55)"
+_GRID = "rgba(255, 255, 255, 0.06)"
+_TEXT = "#cbd5e1"
+_TITLE_COLOR = "#93c5fd"
+_ACCENT = "#6366f1"
+
+
+def _base_layout(title: str, left_margin: int = 60) -> dict:
+    return dict(
+        title=dict(
+            text=title,
+            font=dict(family=_FONT, size=15, color=_TITLE_COLOR),
+            x=0.02,
+            xanchor="left",
+        ),
+        paper_bgcolor=_BG,
+        plot_bgcolor=_PLOT_BG,
+        font=dict(family=_FONT, size=11, color=_TEXT),
+        margin=dict(l=left_margin, r=24, t=56, b=56),
+        width=720,
+        height=520,
+        coloraxis=dict(
+            colorbar=dict(
+                title=dict(text="Count", font=dict(family=_FONT, size=11, color=_TEXT)),
+                tickfont=dict(family=_FONT, size=10, color=_TEXT),
+                thickness=12,
+                len=0.7,
+                outlinewidth=0,
+                bgcolor="rgba(0,0,0,0)",
+            )
+        ),
+        xaxis=dict(
+            tickfont=dict(family=_FONT, size=10, color=_TEXT),
+            title_font=dict(family=_FONT, size=11, color=_TEXT),
+            gridcolor=_GRID,
+            zeroline=False,
+            tickangle=0,
+            automargin=True,
+        ),
+        yaxis=dict(
+            tickfont=dict(family=_FONT, size=10, color=_TEXT),
+            title_font=dict(family=_FONT, size=11, color=_TEXT),
+            gridcolor=_GRID,
+            zeroline=False,
+            automargin=True,
+        ),
+    )
+
 
 def make_viz_tool(registry):
     db_path = registry.db_path
@@ -15,14 +66,15 @@ def make_viz_tool(registry):
     def viz_tool(chart_name: str) -> str:
         """Generates an interactive Plotly chart from live sermon data and returns the JSON file path.
         Supported chart_name values:
-        - 'sermons_per_speaker' — bar chart of sermon count per speaker (top 15)
-        - 'sermons_per_year' — bar chart of sermon count per year
-        - 'verses_per_book' — bar chart of most-preached Bible books from verses table (top 15)
-        - 'sermons_scatter' — bubble chart of sermon count by speaker and year
+        - 'sermons_per_speaker' — horizontal bar chart of sermon count per speaker (top 15)
+        - 'sermons_per_year'    — bar chart of sermon count per year (2015–present)
+        - 'verses_per_book'     — horizontal bar chart of most-preached Bible books (top 15)
+        - 'sermons_scatter'     — bubble chart of sermon count by speaker and year
         Returns the file path to the saved Plotly JSON."""
-        
+
         try:
             with sqlite3.connect(db_path) as conn:
+
                 if chart_name == "sermons_per_speaker":
                     rows = conn.execute(
                         "SELECT speaker, COUNT(*) as n FROM sermons "
@@ -31,32 +83,68 @@ def make_viz_tool(registry):
                     ).fetchall()
                     if not rows:
                         return "No sermon data found."
-                    
+
                     speakers, counts = zip(*rows)
-                    fig = px.bar(
-                        x=counts, y=speakers, orientation='h',
-                        title="Top 10 Speakers by Sermon Count",
-                        labels={'x': 'Number of Sermons', 'y': 'Speaker'},
-                        color=counts, color_continuous_scale='Blues'
-                    )
-                    fig.update_layout(yaxis={'categoryorder':'total ascending'}, showlegend=False)
+                    fig = go.Figure(go.Bar(
+                        x=list(counts),
+                        y=list(speakers),
+                        orientation="h",
+                        marker=dict(
+                            color=list(counts),
+                            colorscale="Blues",
+                            showscale=True,
+                            colorbar=dict(
+                                title=dict(text="Sermons", font=dict(family=_FONT, size=11, color=_TEXT)),
+                                tickfont=dict(family=_FONT, size=10, color=_TEXT),
+                                thickness=12,
+                                len=0.7,
+                                outlinewidth=0,
+                            ),
+                            line=dict(width=0),
+                        ),
+                        hovertemplate="<b>%{y}</b><br>%{x} sermons<extra></extra>",
+                    ))
+                    layout = _base_layout("Top 15 Speakers by Sermon Count", left_margin=170)
+                    layout["yaxis"]["categoryorder"] = "total ascending"
+                    layout["xaxis"]["title"] = "Number of Sermons"
+                    layout["yaxis"]["title"] = ""
+                    fig.update_layout(**layout)
 
                 elif chart_name == "sermons_per_year":
                     rows = conn.execute(
                         "SELECT year, COUNT(*) as n FROM sermons "
-                        "WHERE year IS NOT NULL "
+                        "WHERE year >= 2015 "
                         "GROUP BY year ORDER BY year"
                     ).fetchall()
                     if not rows:
                         return "No sermon data found."
-                    
+
                     years, counts = zip(*rows)
-                    fig = px.bar(
-                        x=[str(y) for y in years], y=counts,
-                        title="Sermons per Year",
-                        labels={'x': 'Year', 'y': 'Number of Sermons'},
-                        color=counts, color_continuous_scale='Viridis'
-                    )
+                    year_labels = [str(y) for y in years]
+                    fig = go.Figure(go.Bar(
+                        x=year_labels,
+                        y=list(counts),
+                        marker=dict(
+                            color=list(counts),
+                            colorscale="Viridis",
+                            showscale=True,
+                            colorbar=dict(
+                                title=dict(text="Sermons", font=dict(family=_FONT, size=11, color=_TEXT)),
+                                tickfont=dict(family=_FONT, size=10, color=_TEXT),
+                                thickness=12,
+                                len=0.7,
+                                outlinewidth=0,
+                            ),
+                            line=dict(width=0),
+                        ),
+                        hovertemplate="<b>%{x}</b><br>%{y} sermons<extra></extra>",
+                    ))
+                    layout = _base_layout("Sermons per Year", left_margin=56)
+                    layout["xaxis"]["title"] = "Year"
+                    layout["xaxis"]["type"] = "category"
+                    layout["xaxis"]["tickangle"] = -45
+                    layout["yaxis"]["title"] = "Sermons"
+                    fig.update_layout(**layout)
 
                 elif chart_name == "verses_per_book":
                     rows = conn.execute(
@@ -66,41 +154,84 @@ def make_viz_tool(registry):
                     ).fetchall()
                     if not rows:
                         return "No verse data found. Run ingest.py first."
+
                     books, counts = zip(*rows)
-                    fig = px.bar(
-                        x=counts, y=books, orientation='h',
-                        title="Top 15 Preached Bible Books",
-                        labels={'x': 'Times Preached', 'y': 'Bible Book'},
-                        color=counts, color_continuous_scale='Greens'
-                    )
-                    fig.update_layout(yaxis={'categoryorder': 'total ascending'}, showlegend=False)
+                    fig = go.Figure(go.Bar(
+                        x=list(counts),
+                        y=list(books),
+                        orientation="h",
+                        marker=dict(
+                            color=list(counts),
+                            colorscale="Teal",
+                            showscale=True,
+                            colorbar=dict(
+                                title=dict(text="References", font=dict(family=_FONT, size=11, color=_TEXT)),
+                                tickfont=dict(family=_FONT, size=10, color=_TEXT),
+                                thickness=12,
+                                len=0.7,
+                                outlinewidth=0,
+                            ),
+                            line=dict(width=0),
+                        ),
+                        hovertemplate="<b>%{y}</b><br>%{x} references<extra></extra>",
+                    ))
+                    layout = _base_layout("Top 15 Preached Bible Books", left_margin=110)
+                    layout["yaxis"]["categoryorder"] = "total ascending"
+                    layout["xaxis"]["title"] = "Times Referenced"
+                    layout["yaxis"]["title"] = ""
+                    fig.update_layout(**layout)
 
                 elif chart_name == "sermons_scatter":
                     rows = conn.execute(
                         "SELECT COALESCE(year, CAST(SUBSTR(date, 1, 4) AS INTEGER)) as yr, "
                         "speaker, COUNT(*) as n FROM sermons "
-                        "WHERE (year IS NOT NULL OR date IS NOT NULL) "
+                        "WHERE (year >= 2015 OR (year IS NULL AND SUBSTR(date, 1, 4) >= '2015')) "
                         "AND speaker IS NOT NULL AND speaker != '' "
                         "GROUP BY yr, speaker ORDER BY yr"
                     ).fetchall()
                     if not rows:
                         return "No sermon data found."
 
-                    years = [str(r[0]) for r in rows]
+                    years_str = [str(r[0]) for r in rows]
                     speakers = [r[1] for r in rows]
                     counts = [r[2] for r in rows]
-
                     all_years = sorted({str(r[0]) for r in rows})
 
-                    fig = px.scatter(
-                        x=years, y=speakers, size=counts, color=counts,
-                        title="Sermon Count by Speaker and Year",
-                        labels={'x': 'Year', 'y': 'Speaker', 'size': 'Count'},
-                        hover_name=speakers, size_max=16,
-                        color_continuous_scale='Plasma',
-                        category_orders={'x': all_years},
+                    fig = go.Figure(go.Scatter(
+                        x=years_str,
+                        y=speakers,
+                        mode="markers",
+                        marker=dict(
+                            size=[max(8, c * 5) for c in counts],
+                            sizemode="area",
+                            sizeref=2.0 * max(counts) / (28 ** 2),
+                            color=counts,
+                            colorscale="Plasma",
+                            showscale=True,
+                            colorbar=dict(
+                                title=dict(text="Sermons", font=dict(family=_FONT, size=11, color=_TEXT)),
+                                tickfont=dict(family=_FONT, size=10, color=_TEXT),
+                                thickness=12,
+                                len=0.7,
+                                outlinewidth=0,
+                            ),
+                            line=dict(width=0),
+                            opacity=0.85,
+                        ),
+                        hovertemplate="<b>%{y}</b> · %{x}<br>%{marker.color} sermons<extra></extra>",
+                    ))
+                    layout = _base_layout("Sermon Activity by Speaker & Year", left_margin=170)
+                    layout["xaxis"].update(
+                        type="category",
+                        tickmode="array",
+                        tickvals=all_years,
+                        tickangle=-45,
+                        title="Year",
                     )
-                    fig.update_xaxes(type='category', tickmode='array', tickvals=all_years, tickangle=-45)
+                    layout["yaxis"]["title"] = ""
+                    layout["height"] = 640
+                    layout["width"] = 720
+                    fig.update_layout(**layout)
 
                 else:
                     return (
@@ -108,15 +239,6 @@ def make_viz_tool(registry):
                         "Valid options: sermons_per_speaker, sermons_per_year, "
                         "verses_per_book, sermons_scatter."
                     )
-
-            left_margin = 180 if chart_name in ("sermons_per_speaker", "verses_per_book", "sermons_scatter") else 60
-            fig.update_layout(
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-                font_family="Inter, sans-serif",
-                title_font_size=18,
-                margin=dict(l=left_margin, r=40, t=60, b=40),
-            )
 
             file_path = os.path.join("/tmp", f"bbtc_chart_{uuid.uuid4().hex[:8]}.json")
             fig.write_json(file_path)

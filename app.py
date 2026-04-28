@@ -54,24 +54,47 @@ try:
     vector_tool = make_vector_tool(vector_store)
     viz_tool = make_viz_tool(registry)
 
+    from datetime import date as _date
+    _today = _date.today().isoformat()
+    _cur_year = _date.today().year
+
     SYSTEM_PROMPT = (
-        "You are the BBTC Sermon Intelligence Assistant for Bethesda Bedok-Tampines Church.\n\n"
-        "## Tool routing\n"
-        "- Use 'sql_query_tool' for: counts, lists of speakers/years, verse statistics, "
-        "questions that need numbers. The database has:\n"
-        "    • sermons(sermon_id, date, year, language, speaker, topic, theme, summary, key_verse, status)\n"
-        "    • verses(id, sermon_id, verse_ref, book, chapter, verse_start, verse_end, is_key_verse)\n"
-        "  For 'most preached book': SELECT book, COUNT(*) as n FROM verses GROUP BY book ORDER BY n DESC LIMIT 10\n"
-        "  For 'verses by speaker': SELECT v.verse_ref, COUNT(*) FROM verses v JOIN sermons s USING(sermon_id) WHERE s.speaker LIKE '%Name%' GROUP BY v.verse_ref ORDER BY COUNT(*) DESC\n"
-        "- Use 'search_sermons_tool' for: questions about sermon content, what a pastor said about a topic, "
-        "summaries of specific sermons. Pass year/speaker filters when specified.\n"
-        "- Use 'viz_tool' only when the user asks for a chart or visualization. "
-        "Valid chart_name values: 'sermons_per_speaker', 'sermons_per_year', 'verses_per_book', 'sermons_scatter'. "
-        "When viz_tool returns a file path, include that exact path verbatim in your response.\n\n"
+        f"You are the BBTC Sermon Intelligence Assistant for Bethesda Bedok-Tampines Church.\n"
+        f"Today is {_today}. Archive covers 2015–{_cur_year}. "
+        f"'Last N years' → min_year = {_cur_year} - N + 1.\n\n"
+        "## Search approach\n"
+        "For every factual question (content, doctrine, theology, what was preached): "
+        "call sql_query_tool AND search_sermons_tool. Do not stop at one tool. "
+        "Report whatever either tool returns — partial matches are useful context.\n"
+        "For chart requests: use viz_tool only.\n\n"
+        "## Tools\n"
+        "sql_query_tool — Schema:\n"
+        "  sermons(sermon_id, date, year, speaker, topic, theme, summary, key_verse)\n"
+        "  verses(sermon_id, verse_ref, book, chapter, verse_start, verse_end, is_key_verse)\n"
+        "  Most preached book: SELECT ba.canonical, COUNT(*) n FROM verses v "
+        "LEFT JOIN book_aliases ba ON LOWER(TRIM(v.book))=ba.alias "
+        "WHERE v.book IS NOT NULL GROUP BY ba.canonical ORDER BY n DESC LIMIT 10\n"
+        "  Never preached: SELECT bb.book_name, bb.testament FROM bible_books bb "
+        "WHERE bb.book_name NOT IN (SELECT DISTINCT COALESCE(ba.canonical,v.book) FROM verses v "
+        "LEFT JOIN book_aliases ba ON LOWER(TRIM(v.book))=ba.alias "
+        "WHERE v.book IS NOT NULL AND v.book!='') ORDER BY bb.book_order\n"
+        "  Favourite verse by speaker: SELECT v.verse_ref, COUNT(*) n FROM verses v "
+        "JOIN sermons s USING(sermon_id) WHERE s.speaker LIKE '%Name%' "
+        "GROUP BY v.verse_ref ORDER BY n DESC LIMIT 5\n"
+        "  Emphasis / themes by year: SELECT year, COUNT(*) sermon_count, "
+        "GROUP_CONCAT(DISTINCT theme) themes FROM sermons "
+        "WHERE year>=2015 AND year IS NOT NULL GROUP BY year ORDER BY year\n"
+        "  Doctrine / BBTC position on X: SELECT topic, speaker, date, summary FROM sermons "
+        "WHERE lower(topic) LIKE '%keyword%' OR lower(summary) LIKE '%keyword%' LIMIT 8 "
+        "(try synonyms: 'once saved' → 'assurance','eternal security'; "
+        "'end times' → 'rapture','tribulation','eschatol')\n\n"
+        "search_sermons_tool — semantic search over sermon text and summaries. "
+        "Use short concept phrases. k=8 for broad topics. Try 2-3 query variants.\n\n"
+        "viz_tool — only for chart requests. Return file path verbatim. "
+        "Valid: sermons_per_speaker · sermons_per_year · verses_per_book · sermons_scatter\n\n"
         "## Rules\n"
-        "- Answer ONLY from tool results. Never invent speaker names, dates, or verses.\n"
-        "- If tools return no data, say so explicitly.\n"
-        "- For 'most recent sermon': use sql_query_tool with ORDER BY date DESC LIMIT 1.\n"
+        "- Never answer from memory. All facts must come from tool results.\n"
+        "- If tools return nothing, say so. Do not speculate.\n"
     )
 
     agent = create_react_agent(
@@ -97,7 +120,7 @@ def respond(message, history):
     if agent is None:
         return "⚠️ Agent not initialized. Check that Ollama is running."
 
-    truncated_history = history[-6:] if len(history) > 6 else history
+    truncated_history = history[-2:] if len(history) > 2 else history
     messages = []
     for turn in truncated_history:
         if turn["role"] == "user":
@@ -133,17 +156,18 @@ def respond(message, history):
 
 
 custom_css = """
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;500;600&family=Inter:wght@300;400;500;600&family=Outfit:wght@700;800&display=swap');
 
 footer { visibility: hidden }
 
 * { box-sizing: border-box; }
 
 body {
-    background: #07101f !important;
+    background: #060e1e !important;
     background-image:
-        radial-gradient(ellipse at 15% 40%, rgba(37, 99, 235, 0.07) 0%, transparent 55%),
-        radial-gradient(ellipse at 85% 15%, rgba(124, 58, 237, 0.06) 0%, transparent 55%) !important;
+        radial-gradient(ellipse at 12% 35%, rgba(37, 99, 235, 0.09) 0%, transparent 52%),
+        radial-gradient(ellipse at 88% 12%, rgba(124, 58, 237, 0.07) 0%, transparent 52%),
+        radial-gradient(ellipse at 50% 90%, rgba(16, 185, 129, 0.04) 0%, transparent 50%) !important;
 }
 
 .gradio-container {
@@ -156,145 +180,210 @@ body {
 /* Scrollbar */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(99, 102, 241, 0.25); border-radius: 2px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(99, 102, 241, 0.45); }
+::-webkit-scrollbar-thumb { background: rgba(99, 102, 241, 0.3); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(99, 102, 241, 0.55); }
 
 /* Header */
 #title-container {
-    padding: 28px 0 20px;
-    margin-bottom: 20px;
+    padding: 28px 0 22px;
+    margin-bottom: 18px;
     display: flex;
     align-items: center;
-    gap: 18px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    gap: 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 #title-container img {
-    height: 42px;
-    opacity: 0.9;
-    filter: drop-shadow(0 0 10px rgba(99, 102, 241, 0.3));
+    height: 44px;
+    opacity: 0.92;
+    filter: drop-shadow(0 0 14px rgba(99, 102, 241, 0.35));
 }
 #title-text h1 {
     font-family: 'Outfit', sans-serif;
-    font-size: 1.9rem;
+    font-size: 2rem;
     font-weight: 800;
-    margin: 0 0 2px 0;
-    background: linear-gradient(110deg, #93c5fd 0%, #a78bfa 55%, #f9a8d4 100%);
+    margin: 0 0 3px 0;
+    background: linear-gradient(108deg, #93c5fd 0%, #a78bfa 52%, #f0abfc 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
-    letter-spacing: -0.5px;
-    line-height: 1.15;
+    letter-spacing: -0.6px;
+    line-height: 1.12;
 }
 #title-text p {
     color: #475569;
-    font-size: 0.72rem;
+    font-size: 0.7rem;
     font-weight: 500;
-    letter-spacing: 1.8px;
+    letter-spacing: 2px;
     text-transform: uppercase;
     margin: 0;
+    font-family: 'Source Code Pro', monospace;
 }
 
 /* Stats bar */
 .stats-bar {
     display: flex;
     gap: 0;
-    background: rgba(13, 20, 40, 0.9);
-    border: 1px solid rgba(99, 102, 241, 0.1);
+    background: rgba(10, 16, 34, 0.92);
+    border: 1px solid rgba(99, 102, 241, 0.12);
     border-radius: 10px;
-    padding: 10px 20px;
+    padding: 10px 22px;
     margin-bottom: 16px;
     color: #64748b;
-    font-size: 0.82rem;
-    letter-spacing: 0.2px;
-    backdrop-filter: blur(20px);
+    font-size: 0.8rem;
+    letter-spacing: 0.3px;
+    backdrop-filter: blur(24px);
+    font-family: 'Source Code Pro', monospace;
 }
 
 /* Chat area */
 .chatbot-container {
-    border-radius: 14px !important;
-    border: 1px solid rgba(255, 255, 255, 0.05) !important;
-    background: rgba(7, 16, 31, 0.92) !important;
+    border-radius: 16px !important;
+    border: 1px solid rgba(255, 255, 255, 0.055) !important;
+    background: rgba(6, 14, 30, 0.94) !important;
     box-shadow:
-        0 0 0 1px rgba(99, 102, 241, 0.04),
-        0 24px 60px -10px rgba(0, 0, 0, 0.7),
-        inset 0 1px 0 rgba(255, 255, 255, 0.03);
+        0 0 0 1px rgba(99, 102, 241, 0.05),
+        0 28px 64px -12px rgba(0, 0, 0, 0.75),
+        inset 0 1px 0 rgba(255, 255, 255, 0.035);
     overflow: hidden !important;
 }
 
 /* Messages */
 .message-user {
-    background: linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 100%) !important;
-    border-radius: 16px 16px 4px 16px !important;
-    padding: 11px 16px !important;
+    background: linear-gradient(135deg, #1a3578 0%, #1d4ed8 100%) !important;
+    border-radius: 18px 18px 4px 18px !important;
+    padding: 12px 18px !important;
     color: #bfdbfe !important;
-    font-size: 0.9rem;
-    line-height: 1.55;
-    box-shadow: 0 2px 12px -3px rgba(37, 99, 235, 0.35);
+    font-size: 0.88rem;
+    line-height: 1.6;
+    box-shadow: 0 2px 14px -3px rgba(37, 99, 235, 0.4);
 }
 .message-assistant {
-    background: rgba(30, 41, 59, 0.6) !important;
-    border: 1px solid rgba(255, 255, 255, 0.05) !important;
-    border-radius: 4px 16px 16px 16px !important;
-    padding: 11px 16px !important;
-    font-size: 0.9rem;
-    line-height: 1.6;
+    background: rgba(22, 32, 54, 0.65) !important;
+    border: 1px solid rgba(255, 255, 255, 0.06) !important;
+    border-radius: 4px 18px 18px 18px !important;
+    padding: 12px 18px !important;
+    font-size: 0.88rem;
+    line-height: 1.65;
+}
+
+/* Plotly chart embed — give it breathing room */
+.gradio-plot {
+    border-radius: 12px !important;
+    overflow: hidden !important;
+    border: 1px solid rgba(99, 102, 241, 0.1) !important;
+    margin-top: 8px !important;
+    background: rgba(10, 16, 34, 0.6) !important;
 }
 
 /* Input row */
 .input-container {
-    background: rgba(13, 20, 40, 0.85) !important;
-    border: 1px solid rgba(99, 102, 241, 0.16) !important;
-    border-radius: 12px !important;
-    margin-top: 10px !important;
-    padding: 4px 4px 4px 6px !important;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease;
-    backdrop-filter: blur(10px);
+    background: rgba(10, 16, 34, 0.88) !important;
+    border: 1px solid rgba(99, 102, 241, 0.18) !important;
+    border-radius: 14px !important;
+    margin-top: 12px !important;
+    padding: 5px 5px 5px 8px !important;
+    transition: border-color 0.22s ease, box-shadow 0.22s ease;
+    backdrop-filter: blur(12px);
 }
 .input-container:focus-within {
-    border-color: rgba(99, 102, 241, 0.42) !important;
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.07);
+    border-color: rgba(99, 102, 241, 0.48) !important;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.09);
+}
+.input-container textarea {
+    font-family: 'Inter', sans-serif !important;
+    font-size: 0.88rem !important;
 }
 
 /* Submit button */
 .btn-primary {
-    background: linear-gradient(135deg, #1d4ed8 0%, #6d28d9 100%) !important;
+    background: linear-gradient(138deg, #1d4ed8 0%, #5b21b6 100%) !important;
     border: none !important;
     color: #e0e7ff !important;
     font-weight: 600 !important;
-    font-size: 0.8rem !important;
-    letter-spacing: 0.6px;
+    font-size: 0.78rem !important;
+    letter-spacing: 0.8px;
     text-transform: uppercase;
-    border-radius: 9px !important;
-    transition: all 0.2s ease;
-    box-shadow: 0 2px 10px -2px rgba(37, 99, 235, 0.45);
+    border-radius: 10px !important;
+    transition: all 0.22s ease;
+    box-shadow: 0 2px 12px -2px rgba(37, 99, 235, 0.5);
+    font-family: 'Source Code Pro', monospace !important;
 }
 .btn-primary:hover {
     transform: translateY(-1px);
-    box-shadow: 0 6px 20px -4px rgba(37, 99, 235, 0.6);
-    filter: brightness(1.1);
+    box-shadow: 0 6px 22px -4px rgba(37, 99, 235, 0.65);
+    filter: brightness(1.08);
 }
 .btn-primary:active {
     transform: translateY(0);
-    filter: brightness(0.95);
+    filter: brightness(0.93);
+}
+
+/* Secondary button (Clear) */
+button.secondary {
+    background: rgba(30, 41, 59, 0.7) !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+    color: #94a3b8 !important;
+    border-radius: 10px !important;
+    font-family: 'Source Code Pro', monospace !important;
+    font-size: 0.78rem !important;
+    letter-spacing: 0.5px;
+    transition: all 0.18s ease;
+}
+button.secondary:hover {
+    background: rgba(30, 41, 59, 1) !important;
+    border-color: rgba(255,255,255,0.14) !important;
+    color: #cbd5e1 !important;
+}
+
+/* Example pills */
+.examples-holder .example-btn,
+.gr-examples .example {
+    font-family: 'Source Code Pro', monospace !important;
+    font-size: 0.75rem !important;
+    background: rgba(15, 23, 42, 0.8) !important;
+    border: 1px solid rgba(99, 102, 241, 0.15) !important;
+    color: #94a3b8 !important;
+    border-radius: 8px !important;
+    transition: all 0.18s ease !important;
+}
+.examples-holder .example-btn:hover,
+.gr-examples .example:hover {
+    background: rgba(30, 41, 80, 0.9) !important;
+    border-color: rgba(99, 102, 241, 0.35) !important;
+    color: #c7d2fe !important;
 }
 
 /* Sidebar */
 .sidebar {
-    background: rgba(10, 16, 32, 0.75) !important;
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.05) !important;
-    padding: 20px !important;
-    border-radius: 14px;
+    background: rgba(8, 14, 28, 0.8) !important;
+    backdrop-filter: blur(24px);
+    border: 1px solid rgba(255, 255, 255, 0.055) !important;
+    padding: 22px !important;
+    border-radius: 16px;
+}
+.sidebar h3 {
+    font-family: 'Source Code Pro', monospace !important;
+    font-size: 0.72rem !important;
+    letter-spacing: 1.8px !important;
+    text-transform: uppercase !important;
+    color: #475569 !important;
+    margin-bottom: 14px !important;
+}
+.sidebar p, .sidebar li {
+    font-size: 0.82rem !important;
+    color: #64748b !important;
+    line-height: 1.6 !important;
 }
 
 /* Status badges */
 .status-badge {
-    padding: 3px 9px;
-    border-radius: 5px;
-    font-size: 0.6rem;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 0.58rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 1px;
+    letter-spacing: 1.2px;
+    font-family: 'Source Code Pro', monospace;
 }
 .status-online {
     background: rgba(34, 197, 94, 0.1);
@@ -341,12 +430,20 @@ with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
 
             gr.Examples(
                 examples=[
-                    ["Show an interactive chart of how many sermons were preached each year"],
-                    ["Create an interactive bar chart of sermon count per speaker"],
-                    ["Show a scatter plot of sermon counts by speaker and year"],
-                    ["How many sermons are in the archive and who are the top 5 speakers?"],
-                    ["What was the most recent sermon and what were its key points?"],
-                    ["What have our pastors said about faith during trials and suffering?"],
+                    ["Trend analysis: Plot the number of sermons preached per year since 2010."],
+                    ["Speaker breakdown: Create a stacked bar chart of sermon counts by speaker per year."],
+                    ["Scripture coverage: Show a heatmap of Bible books most frequently preached."],
+        
+                     # Qualitative / Doctrine Intent
+                    ["Doctrine: What is BBTC's theological position on 'Once Saved, Always Saved'?"],
+                    ["Eschatology: Explain the believed sequence of End Times events."],
+                    ["Evolution of Themes: Compare the primary ministry focus in 2015 versus today."],
+        
+                    # Specific Content Search
+                    ["Find the top 3 sermons related to 'Spiritual Warfare' from the last two years."],
+                    ["Which Minor Prophets have not been the focus of a sermon in the last 5 years?"],
+                    ["Summarize the 5 most frequent emphasized Bible verses in BBTC sermons."],
+                    ["Search for all mentions of 'Mental Health' and categorize the biblical advice given."]
                 ],
                 inputs=msg,
                 label="Example questions"
