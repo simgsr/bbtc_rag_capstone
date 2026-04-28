@@ -148,7 +148,8 @@ python ingest.py --year 2024  # re-ingest a specific year only
 - PyMuPDF text extraction
 - **Regex** on labeled fields: `TOPIC`, `SPEAKER`, `THEME`, `DATE` (explicit in all 2024+ NGs)
 - Fallback: `filename_parser.py` for older files without labeled structure
-- Body text = everything after the `INTRODUCTION` label
+- If neither regex nor filename parsing yields a speaker, `speaker = NULL` and status = `partial`
+- Body text = everything after the `INTRODUCTION` label (or full text if no label found)
 
 **Step 4 — Extract PS verses**
 `src/ingestion/ps_extractor.py` (new):
@@ -156,6 +157,7 @@ python ingest.py --year 2024  # re-ingest a specific year only
 - **Text extraction** — PyMuPDF on PS files that have readable text (~50%)
 - **LLM extraction** — `llama3.1:8b` on extracted text for structured verse list when text is available
 - First verse found = `key_verse`; all verses stored in `verses` table
+- If no verse is found from any source, `key_verse = NULL` and the sermon is still ingested (verses table has no rows for it)
 
 **Step 5 — Generate summary**
 `llama3.1:8b` prompt combining:
