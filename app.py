@@ -10,11 +10,10 @@ from src.ui_helpers import extract_chart_path, fetch_archive_stats, render_stats
 from src.storage.sqlite_store import SermonRegistry
 from src.tools.sql_tool import make_sql_tool
 from src.tools.vector_tool import make_vector_tool
-from langchain_core.messages import HumanMessage, AIMessage
-from src.tools.bible_tool import make_bible_tool
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from src.tools.viz_tool import make_viz_tool
 import plotly.io as pio
-from langchain.agents import create_agent
+from langgraph.prebuilt import create_react_agent
 
 load_dotenv()
 
@@ -51,46 +50,35 @@ try:
     vector_store = SermonVectorStore()
     llm = get_llm(temperature=0.1)
 
-    sql_tool = make_sql_tool(registry)
+    sql_tool = make_sql_tool(registry.db_path)
     vector_tool = make_vector_tool(vector_store)
-    bible_tool = make_bible_tool(vector_store)
     viz_tool = make_viz_tool(registry)
 
     SYSTEM_PROMPT = (
         "You are the BBTC Sermon Intelligence Assistant for Bethesda Bedok-Tampines Church.\n\n"
         "## Tool routing\n"
-        "- Use 'sql_query_tool' for: counts, statistics, lists of speakers/years, date lookups, "
-        "questions that need numbers (e.g. 'how many sermons', 'top 5 speakers').\n"
-        "  The database has two relevant tables:\n"
-        "    • sermons(sermon_id, speaker, date, year, bible_book, primary_verse, topic, status, ...)\n"
-        "    • sermon_intelligence(sermon_id, speaker, bible_book, primary_verse, verses_used, summary)\n"
-        "  For bible book / verse queries, JOIN or UNION both tables:\n"
-        "    SELECT COALESCE(s.bible_book, si.bible_book) as book, s.speaker, s.year\n"
-        "    FROM sermons s LEFT JOIN sermon_intelligence si ON s.sermon_id = si.sermon_id\n"
-        "  Always prefer COALESCE(s.bible_book, si.bible_book) to maximise coverage.\n"
-        "- For 'most recent', 'latest', or 'newest' sermon questions: use sql_query_tool with "
-        "'SELECT * FROM sermons WHERE date IS NOT NULL ORDER BY date DESC LIMIT 1' to identify "
-        "the sermon, then use search_sermons_tool with that filename or speaker to get the content. "
-        "Never ask the user for the current date — the database already contains all dates.\n"
-        "- Use 'search_sermons_tool' for: questions about sermon *content*, topics, theology, "
-        "what a pastor said, summaries of specific sermons. Pass 'year' or 'speaker' filters "
-        "when the user specifies them.\n"
-        "- For 'what was said about X in year Y' or 'what did speaker Z say about X', use search_sermons_tool "
-        "with the year/speaker filter directly — do not run sql_query_tool first.\n"
-        "- Use 'compare_bible_versions' only when the user explicitly asks to compare Bible translations.\n"
+        "- Use 'sql_query_tool' for: counts, lists of speakers/years, verse statistics, "
+        "questions that need numbers. The database has:\n"
+        "    • sermons(sermon_id, date, year, language, speaker, topic, theme, summary, key_verse, status)\n"
+        "    • verses(id, sermon_id, verse_ref, book, chapter, verse_start, verse_end, is_key_verse)\n"
+        "  For 'most preached book': SELECT book, COUNT(*) as n FROM verses GROUP BY book ORDER BY n DESC LIMIT 10\n"
+        "  For 'verses by speaker': SELECT v.verse_ref, COUNT(*) FROM verses v JOIN sermons s USING(sermon_id) WHERE s.speaker LIKE '%Name%' GROUP BY v.verse_ref ORDER BY COUNT(*) DESC\n"
+        "- Use 'search_sermons_tool' for: questions about sermon content, what a pastor said about a topic, "
+        "summaries of specific sermons. Pass year/speaker filters when specified.\n"
         "- Use 'viz_tool' only when the user asks for a chart or visualization. "
-        "Valid chart_name values: 'sermons_per_speaker', 'sermons_per_year', 'top_bible_books', 'sermons_scatter'. "
-        "When viz_tool returns a file path, copy that exact path into your response verbatim — do not describe or summarise the chart data.\n\n"
-        "## Grounding rules\n"
-        "- Answer ONLY from data returned by the tools. Never invent sermon content, speaker names, "
-        "dates, or verses.\n"
-        "- When answering from search_sermons_tool results, cite the sermon filename and speaker name for every excerpt quoted.\n"
-        "- If the tools return no relevant data, say so explicitly — do not guess or fill gaps.\n"
-        "- If you need more information to answer precisely, call the relevant tool again with "
-        "a refined query before responding.\n"
+        "Valid chart_name values: 'sermons_per_speaker', 'sermons_per_year', 'verses_per_book', 'sermons_scatter'. "
+        "When viz_tool returns a file path, include that exact path verbatim in your response.\n\n"
+        "## Rules\n"
+        "- Answer ONLY from tool results. Never invent speaker names, dates, or verses.\n"
+        "- If tools return no data, say so explicitly.\n"
+        "- For 'most recent sermon': use sql_query_tool with ORDER BY date DESC LIMIT 1.\n"
     )
 
-    agent = create_agent(llm, tools=[sql_tool, vector_tool, bible_tool, viz_tool], system_prompt=SYSTEM_PROMPT)
+    agent = create_react_agent(
+        llm,
+        tools=[sql_tool, vector_tool, viz_tool],
+        prompt=SystemMessage(content=SYSTEM_PROMPT),
+    )
 
 except Exception as e:
     print(f"⚠️ Initialization warning: {e}")
