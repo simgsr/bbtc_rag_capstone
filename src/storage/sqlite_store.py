@@ -111,4 +111,7 @@ class SermonRegistry:
 
     def wipe(self):
         with sqlite3.connect(self.db_path) as conn:
-            conn.executescript("DELETE FROM verses; DELETE FROM sermons;")
+            conn.executescript(
+                "DROP TABLE IF EXISTS verses; DROP TABLE IF EXISTS sermons;"
+            )
+        self._init_db()

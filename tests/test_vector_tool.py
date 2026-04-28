@@ -14,20 +14,22 @@ def _sample_results():
         {
             "content": "God so loved the world.",
             "metadata": {
-                "filename": "english_2024_grace.pdf",
+                "sermon_id": "2024-03-10-grace",
+                "topic": "Grace and Salvation",
                 "speaker": "Pastor John",
                 "date": "2024-03-10",
-                "primary_verse": "John 3:16",
+                "key_verse": "John 3:16",
             },
             "distance": 0.1,
         },
         {
             "content": "Faith is the substance of things hoped for.",
             "metadata": {
-                "filename": "english_2023_faith.pdf",
+                "sermon_id": "2023-06-01-faith",
+                "topic": "The Nature of Faith",
                 "speaker": "Pastor Mary",
                 "date": "2023-06-01",
-                "primary_verse": "Hebrews 11:1",
+                "key_verse": "Hebrews 11:1",
             },
             "distance": 0.2,
         },
@@ -46,10 +48,10 @@ def test_tool_includes_speaker_in_output():
     assert "Pastor John" in result
 
 
-def test_tool_includes_filename_in_output():
+def test_tool_includes_topic_in_output():
     tool = make_vector_tool(_make_store(_sample_results()))
     result = tool.invoke({"query": "grace"})
-    assert "english_2024_grace.pdf" in result
+    assert "Grace and Salvation" in result
 
 
 def test_tool_passes_year_filter():
