@@ -4,112 +4,141 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **Hybrid Agentic RAG pipeline** for the BBTC (Bethesda Bedok-Tampines Church) sermon archive. It scrapes sermon documents (PDF, PPTX, DOCX) from the BBTC website, extracts text and LLM-derived metadata, stores them in a dual-layer storage system (SQLite + ChromaDB), and exposes a Gradio chat interface backed by a LangGraph ReAct agent.
+**Hybrid Agentic RAG pipeline** for the BBTC (Bethesda Bedok-Tampines Church) sermon archive.
+
+Scrapes sermon documents from the BBTC website, groups them into **sermon units** (one Notes/Guide + one Slides/PPT per Sunday), extracts structured metadata, stores in SQLite + ChromaDB, and exposes a Gradio chat interface backed by a LangGraph ReAct agent.
 
 ## Environment Setup
 
 ```bash
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env  # set API keys: GROQ_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY
+cp .env.example .env  # optional: GROQ_API_KEY, GEMINI_API_KEY for cloud fallback
 ```
 
-`.env` keys used:
-- `GROQ_API_KEY` — Groq cloud inference (default LLM)
-- `GEMINI_API_KEY` / `GOOGLE_API_KEY` — Gemini cloud inference (either key works; the app maps GEMINI_API_KEY → GOOGLE_API_KEY automatically)
-- Ollama running locally is the fallback when no cloud keys are present
+Ollama must be running locally: `ollama serve`
+
+Required Ollama models:
+- `BGE-M3` — embeddings (primary)
+- `llama3.1:8b` — metadata extraction + summary generation
 
 ## Running the Application
 
 ```bash
-# Launch the Gradio chat UI
+# Launch Gradio chat UI
 python app.py
 
-# Run the full ingestion pipeline manually (scrape + extract + vectorize)
-dagster asset materialize --select sermon_ingestion_summary -m dagster_pipeline
+# Full ingest from scratch (wipe + rebuild)
+python ingest.py --wipe
 
-# Run the Dagster web UI (to trigger/monitor the pipeline)
+# Incremental ingest (new files only)
+python ingest.py
+
+# Ingest a specific year
+python ingest.py --year 2024
+
+# Dagster web UI (weekly scheduler)
 DAGSTER_HOME=$(mktemp -d) dagster dev -m dagster_pipeline
 
-# One-shot: vectorize already-extracted sermons without re-scraping
-python quick_ingest.py
-
-# Scrape a single year
+# Scrape a single year from BBTC website
 python src/scraper/bbtc_scraper.py 2024
 ```
 
 ## Architecture
 
+### Sermon Unit Model
+
+Every weekend (Sat/Sun), BBTC posts two files:
+- **NG** (Notes/Guide): PDF with labeled fields `TOPIC`, `SPEAKER`, `THEME`, `DATE` + body text
+- **PS** (Slides/PPT): PDF exported from PowerPoint; filename encodes the key verse
+
+Together they form one **sermon unit** — the atomic unit of ingestion.
+
 ### Data Flow
 
 ```
-BBTC Website → BBTCScraper → data/staging/ (raw files)
-                           → data/sermons/ (.txt extracts)
-                           → SQLite (data/sermons.db) [status: extracted]
-                               ↓ MetadataExtractor (LLM)
-                           → SQLite [status: indexed, with speaker/date/verse]
-                           → ChromaDB (data/chroma_db/) [vector chunks]
-                               ↓
-                        Gradio UI → LangGraph ReAct Agent → Tools → Response
+BBTC Website → BBTCScraper (classify-before-download: skip handouts)
+    ↓
+data/staging/  (NG + PS files only)
+    ↓
+ingest.py
+  ├── CLASSIFY  (file_classifier.py)  → ng | ps | handout
+  ├── GROUP     (sermon_grouper.py)   → SermonGroup(ng, ps[])
+  ├── EXTRACT   (ng_extractor.py)     → TOPIC/SPEAKER/THEME/DATE via regex
+  │             (ps_extractor.py)     → verses from filename + LLM on text
+  ├── SUMMARIZE (llama3.1:8b)         → unified NG+PS summary
+  └── EMBED     (chroma_store.py)     → BGE-M3 → sermon_collection
+    ↓
+SQLite (data/sermons.db)  ← structured metadata + verses table
+ChromaDB (data/chroma_db/) ← body chunks (800/150) + summary chunk per sermon
+    ↓
+LangGraph ReAct Agent (3 tools)
+    ↓
+Gradio UI
 ```
 
 ### Key Components
 
 | Component | File | Purpose |
 |---|---|---|
-| `SermonRegistry` | `src/storage/sqlite_store.py` | SQLite CRUD; tracks ingestion status |
-| `SermonVectorStore` | `src/storage/chroma_store.py` | ChromaDB with Ollama embeddings + CrossEncoder reranker |
-| `BBTCScraper` | `src/scraper/bbtc_scraper.py` | Cloudflare-bypass scraper; downloads + text-extracts PDFs/PPTX/DOCX |
-| `MetadataExtractor` | `src/ingestion/metadata_extractor.py` | LLM extracts speaker/date/series/verse from first 500 chars |
-| `get_llm()` | `src/llm.py` | Factory returning Groq/Gemini/Ollama LangChain chat model |
-| `dagster_pipeline.py` | root | Dagster asset that orchestrates full scrape+ingest; weekly Sunday schedule |
-| `app.py` | root | Gradio UI + LangGraph ReAct agent wired to three tools |
+| `SermonRegistry` | `src/storage/sqlite_store.py` | SQLite CRUD; sermons + verses tables |
+| `SermonVectorStore` | `src/storage/chroma_store.py` | ChromaDB with BGE-M3 + CrossEncoder reranker |
+| `BBTCScraper` | `src/scraper/bbtc_scraper.py` | Cloudflare-bypass scraper; classify-before-download |
+| `classify_file` | `src/ingestion/file_classifier.py` | Returns `ng` \| `ps` \| `handout` |
+| `group_sermon_files` | `src/ingestion/sermon_grouper.py` | Pairs NG+PS by date proximity/topic overlap |
+| `extract_ng_metadata` | `src/ingestion/ng_extractor.py` | Regex on labeled fields; filename fallback |
+| `parse_verses_from_filename` | `src/ingestion/ps_extractor.py` | Verse regex on PS filenames |
+| `run_pipeline` | `ingest.py` | Orchestrates full classify→group→extract→embed |
+| `dagster_pipeline.py` | root | Weekly Saturday schedule wrapping `ingest.py` |
+| `app.py` | root | Gradio UI + LangGraph ReAct agent |
 
-### Agent Tools (LangGraph ReAct)
+### Agent Tools
 
-- **`sql_query_tool`** — executes arbitrary SQL against `data/sermons.db`; use for counts, stats, date lookups
-- **`search_sermons_tool`** — semantic search over ChromaDB `sermon_collection`; use for "what was said about X"
-- **`matplotlib_tool`** — generates PNG charts from live SQLite data; supports `sermons_per_speaker`, `sermons_per_year`, `top_bible_books`
+- **`sql_query_tool`** — SQL against `data/sermons.db`; use for counts, lists, verse aggregations
+- **`search_sermons_tool`** — BGE-M3 semantic search over `sermon_collection`; use for content queries
+- **`viz_tool`** — Plotly interactive charts: `sermons_per_speaker`, `sermons_per_year`, `verses_per_book`, `sermons_scatter`
 
 ### SQLite Schema
 
 ```sql
 sermons(
-  sermon_id TEXT PRIMARY KEY,  -- slugified filename
-  filename TEXT,
-  url TEXT UNIQUE,
-  speaker TEXT,
-  date TEXT,                   -- YYYY-MM-DD
-  series TEXT,
-  bible_book TEXT,
-  primary_verse TEXT,          -- e.g. "Romans 8:28"
-  language TEXT,               -- "English" | "Mandarin"
-  file_type TEXT,              -- pdf | pptx | docx
-  year INTEGER,
-  status TEXT,                 -- extracted → indexed | failed
-  date_scraped TEXT
+  sermon_id TEXT PRIMARY KEY,  -- "2024-01-06-the-heart-of-discipleship"
+  date      TEXT,              -- YYYY-MM-DD
+  year      INTEGER,
+  language  TEXT,              -- "English" | "Mandarin"
+  speaker   TEXT,
+  topic     TEXT,
+  theme     TEXT,
+  summary   TEXT,              -- LLM-generated from NG+PS
+  key_verse TEXT,              -- first verse from PS
+  ng_file   TEXT,              -- staging filename of NG
+  ps_file   TEXT,              -- staging filename of PS (nullable)
+  status    TEXT               -- grouped → extracted → indexed | failed
+)
+
+verses(
+  id          INTEGER PRIMARY KEY,
+  sermon_id   TEXT,            -- FK → sermons
+  verse_ref   TEXT,            -- "Luke 9:23"
+  book        TEXT,            -- "Luke"
+  chapter     INTEGER,
+  verse_start INTEGER,
+  verse_end   INTEGER,
+  is_key_verse INTEGER         -- 1 = key verse (first in PS)
 )
 ```
 
-### Ingestion Statuses
+### ChromaDB
 
-- `extracted` — text pulled from document, not yet LLM-processed
-- `processed` — synonym for extracted (treated equivalently in pipeline)
-- `indexed` — metadata extracted + vectorized in ChromaDB
-- `failed` — text extraction failed
-
-### ChromaDB Collections
-
-- `sermon_collection` — chunked sermon text (chunk_size=1000, overlap=100)
-- `bible_collection` — reserved for Bible text (not yet populated)
-
-Embeddings default to `nomic-embed-text` via Ollama; falls back to ChromaDB's built-in embeddings if Ollama is unavailable.
+- Collection: `sermon_collection`
+- Chunks: NG body text (800/150) + LLM summary (single chunk) per sermon
+- Metadata per chunk: `{sermon_id, doc_type, speaker, date, year, topic, theme, language, key_verse}`
+- Embeddings: `BGE-M3` via Ollama (fallback: nomic-embed-text)
 
 ## Notable Quirks
 
-- `MetadataExtractor` uses Groq by default and falls back to Ollama (`llama3.2:3b`) on rate-limit errors (HTTP 429).
-- The `Reranker` in `src/storage/reranker.py` uses `cross-encoder/ms-marco-MiniLM-L-6-v2` for real CrossEncoder reranking.
-- `matplotlib_tool` queries live data from SQLite for three chart types: `sermons_per_speaker`, `sermons_per_year`, `top_bible_books`.
-- The scraper uses `cloudscraper` to bypass Cloudflare protection on the BBTC website.
-- All imports of `langchain_google_genai` happen after `GEMINI_API_KEY` is remapped to `GOOGLE_API_KEY` in `app.py`.
-- Dagster creates temporary `DAGSTER_HOME` directories (`.tmp_dagster_home_*`) in the project root; these can be ignored or cleaned up.
+- NG labeled fields (`TOPIC`, `SPEAKER`, etc.) are reliable for 2022+ files. Older files fall back to `filename_parser.py`.
+- ~50% of PS files are image-based PDFs with no extractable text — verse extraction relies on filename regex.
+- The scraper skips handouts before downloading (classify-before-download).
+- `create_react_agent` from `langgraph.prebuilt` is used — NOT `langchain.agents.create_agent`.
+- BGE-M3 embedding model: 1.2 GB, multilingual (handles English + Mandarin sermons).
