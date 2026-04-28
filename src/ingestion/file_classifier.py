@@ -1,14 +1,15 @@
-"""Classify BBTC sermon files by role: cell_guide, sermon_slides, or other."""
+"""Classify BBTC sermon files as ng, ps, or handout."""
 
 import re
 
-_CELL_GUIDE_RE = re.compile(
+_NG_RE = re.compile(
     r'(?:members?(?:27)?|leaders?|cell)[-_]?(?:guide|copy|guide[-_]updated)'
-    r'|MembersGuide|MessageSummary.*Members',
+    r'|MembersGuide|MessageSummary.*Members'
+    r'|[-_]notes?[-_.]|[-_]notes?\.',
     re.IGNORECASE,
 )
 
-_OTHER_RE = re.compile(
+_HANDOUT_RE = re.compile(
     r'[-_](handout|visual[-_]?summary)[-_.]|handout\.',
     re.IGNORECASE,
 )
@@ -17,12 +18,12 @@ _OTHER_RE = re.compile(
 def classify_file(filename: str) -> str:
     """
     Returns:
-        "cell_guide"    — Members/Leaders/Cell Guide or MessageSummary+Members
-        "sermon_slides" — PPT deck, .pptx, or primary sermon PDF
-        "other"         — handout, visual summary, or supplementary
+        "ng"      — Notes / Cell Guide / Members Guide / Members Copy
+        "ps"      — PPT deck, slides PDF, or primary sermon PDF
+        "handout" — Handout or visual summary (skip)
     """
-    if _CELL_GUIDE_RE.search(filename):
-        return "cell_guide"
-    if _OTHER_RE.search(filename):
-        return "other"
-    return "sermon_slides"
+    if _NG_RE.search(filename):
+        return "ng"
+    if _HANDOUT_RE.search(filename):
+        return "handout"
+    return "ps"
