@@ -1,0 +1,4 @@
+[32m2026-04-28 00:48:07 +0800[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 2cf41ebb-2d65-42f6-a774-f095f7e20829 - 19752 - LOGS_CAPTURED - Started capturing logs in process (pid: 19752).
+[32m2026-04-28 00:48:07 +0800[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 2cf41ebb-2d65-42f6-a774-f095f7e20829 - 19752 - sermon_ingestion_summary - STEP_START - Started execution of step "sermon_ingestion_summary".
+[32m2026-04-28 00:48:07 +0800[0m - dagster - [34mINFO[0m - __ASSET_JOB - 2cf41ebb-2d65-42f6-a774-f095f7e20829 - sermon_ingestion_summary - 🚀 Starting ingestion for years: [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]
+[32m2026-04-28 00:48:07 +0800[0m - dagster - [34mINFO[0m - __ASSET_JOB - 2cf41ebb-2d65-42f6-a774-f095f7e20829 - sermon_ingestion_summary - 📅 Scrapping year 2015...

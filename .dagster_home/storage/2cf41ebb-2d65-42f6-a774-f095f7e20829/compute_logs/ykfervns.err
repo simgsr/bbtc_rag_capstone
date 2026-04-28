@@ -1,0 +1,5 @@
+[32m2026-04-28 00:48:07 +0800[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 2cf41ebb-2d65-42f6-a774-f095f7e20829 - 19751 - LOGS_CAPTURED - Started capturing logs in process (pid: 19751).
+[32m2026-04-28 00:48:07 +0800[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 2cf41ebb-2d65-42f6-a774-f095f7e20829 - 19751 - bible_ingestion - STEP_START - Started execution of step "bible_ingestion".
+[32m2026-04-28 00:48:07 +0800[0m - dagster - [34mINFO[0m - __ASSET_JOB - 2cf41ebb-2d65-42f6-a774-f095f7e20829 - bible_ingestion - 🔍 Found 0 already indexed Bible versions.
+[32m2026-04-28 00:48:07 +0800[0m - dagster - [34mINFO[0m - __ASSET_JOB - 2cf41ebb-2d65-42f6-a774-f095f7e20829 - bible_ingestion - 🆕 Found 3 new Bible versions to ingest: ['NIV', 'ESV', 'ASV']
+Loading weights:   0%|          | 0/105 [00:00<?, ?it/s]Loading weights: 100%|██████████| 105/105 [00:00<00:00, 12828.86it/s]

@@ -1,0 +1,7 @@
+[32m2026-04-28 00:51:31 +0800[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - cd577e8f-a2ed-41c2-bd36-7e921d61c28d - 20408 - LOGS_CAPTURED - Started capturing logs in process (pid: 20408).
+[32m2026-04-28 00:51:31 +0800[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - cd577e8f-a2ed-41c2-bd36-7e921d61c28d - 20408 - bible_ingestion - STEP_START - Started execution of step "bible_ingestion".
+[32m2026-04-28 00:51:31 +0800[0m - dagster - [34mINFO[0m - __ASSET_JOB - cd577e8f-a2ed-41c2-bd36-7e921d61c28d - bible_ingestion - 🔍 Found 0 already indexed Bible versions.
+[32m2026-04-28 00:51:31 +0800[0m - dagster - [34mINFO[0m - __ASSET_JOB - cd577e8f-a2ed-41c2-bd36-7e921d61c28d - bible_ingestion - 🆕 Found 3 new Bible versions to ingest: ['NIV', 'ESV', 'ASV']
+Loading weights:   0%|          | 0/105 [00:00<?, ?it/s]Loading weights: 100%|██████████| 105/105 [00:00<00:00, 14354.22it/s]
+[32m2026-04-28 00:51:39 +0800[0m - dagster - [34mINFO[0m - __ASSET_JOB - cd577e8f-a2ed-41c2-bd36-7e921d61c28d - bible_ingestion - 📖 --- Processing Bible Version: NIV ---
+[32m2026-04-28 00:51:47 +0800[0m - dagster - [34mINFO[0m - __ASSET_JOB - cd577e8f-a2ed-41c2-bd36-7e921d61c28d - bible_ingestion - ✅ Extracted 30913 verses from NIV
