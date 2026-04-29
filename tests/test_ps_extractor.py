@@ -50,3 +50,42 @@ def test_normalize_verse_ref_range():
 def test_normalize_verse_ref_chapter_only():
     ref = normalize_verse_ref("John", 11, None, None)
     assert ref == "John 11"
+
+
+def test_numbered_prefix_1_samuel():
+    verses = parse_verses_from_filename("English_2019_1-SAMUEL-9V1-10.pdf")
+    assert len(verses) >= 1
+    assert verses[0]["book"] == "1 Samuel"
+    assert verses[0]["chapter"] == 9
+    assert verses[0]["verse_start"] == 1
+    assert verses[0]["verse_end"] == 10
+
+
+def test_numbered_prefix_2_kings():
+    verses = parse_verses_from_filename("English_2022_2-KINGS-4V1-7.pdf")
+    assert len(verses) >= 1
+    assert verses[0]["book"] == "2 Kings"
+    assert verses[0]["chapter"] == 4
+
+
+def test_numbered_prefix_1_corinthians():
+    verses = parse_verses_from_filename("English_2020_LOVE-CHAPTER-1-CORINTHIANS-13V4-7.pdf")
+    assert len(verses) >= 1
+    assert verses[0]["book"] == "1 Corinthians"
+    assert verses[0]["chapter"] == 13
+
+
+def test_numbered_prefix_2_timothy():
+    verses = parse_verses_from_filename("English_2021_EQUIP-2-TIMOTHY-3V16.pdf")
+    assert len(verses) >= 1
+    assert verses[0]["book"] == "2 Timothy"
+    assert verses[0]["chapter"] == 3
+    assert verses[0]["verse_start"] == 16
+
+
+def test_unnumbered_book_still_works():
+    verses = parse_verses_from_filename("English_2024_FAITH-HEBREWS-11V1.pdf")
+    assert len(verses) >= 1
+    assert verses[0]["book"] == "Hebrews"
+    assert verses[0]["chapter"] == 11
+    assert verses[0]["verse_start"] == 1
