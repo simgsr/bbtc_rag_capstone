@@ -1,35 +1,22 @@
 # src/storage/chroma_store.py
-import os
-# Suppress Hugging Face hub warnings
-os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 import chromadb
 from src.storage.reranker import Reranker
 
 class SermonVectorStore:
     def __init__(self, persist_dir: str = "data/chroma_db", embeddings=None):
         self._client = chromadb.PersistentClient(path=persist_dir)
-        self._embeddings = embeddings
-        
-        # If no embeddings provided, try Ollama, then fall back to local HuggingFace (same 768-dim)
-        if self._embeddings is None:
+        if embeddings is not None:
+            self._embeddings = embeddings
+        else:
             try:
                 from langchain_ollama import OllamaEmbeddings
                 self._embeddings = OllamaEmbeddings(model="BGE-M3")
                 self._embeddings.embed_query("test")
-                print("✅ Using BGE-M3 embeddings via Ollama.")
             except Exception:
-                print("⚠️  Ollama BGE-M3 unavailable. Falling back to nomic-embed-text.")
-                try:
-                    from langchain_ollama import OllamaEmbeddings
-                    self._embeddings = OllamaEmbeddings(model="nomic-embed-text")
-                    self._embeddings.embed_query("test")
-                except Exception:
-                    from langchain_community.embeddings import HuggingFaceEmbeddings
-                    self._embeddings = HuggingFaceEmbeddings(
-                        model_name="sentence-transformers/all-mpnet-base-v2",
-                        model_kwargs={"device": "cpu"},
-                        encode_kwargs={"normalize_embeddings": True},
-                    )
+                raise RuntimeError(
+                    "BGE-M3 embeddings unavailable. "
+                    "Start Ollama and run: ollama pull bge-m3"
+                )
         
         self._sermons = self._client.get_or_create_collection("sermon_collection")
         self._bible = self._client.get_or_create_collection("bible_collection")
@@ -99,10 +86,10 @@ class SermonVectorStore:
     def search_bible(self, query: str, k: int = 4, where: dict | None = None) -> list[dict]:
         return self._search(self._bible, query, k, where)
 
-    def get_bible_versions(self, ref_id: str) -> list[dict]:
-        """Returns all versions of a specific verse reference."""
+    def get_bible_versions(self, reference: str) -> list[dict]:
+        """Returns all versions of a specific verse reference string (e.g. '1 John 1:9')."""
         results = self._bible.get(
-            where={"ref_id": ref_id},
+            where={"reference": reference},
             include=["documents", "metadatas"]
         )
         return [

@@ -5,13 +5,14 @@ import time
 import urllib.request
 from dotenv import load_dotenv
 from src.storage.chroma_store import SermonVectorStore
-from src.llm import get_llm
+from src.llm import get_llm, GROQ_MODEL
 from src.ui_helpers import extract_chart_path, fetch_archive_stats, render_stats_bar
 from src.storage.sqlite_store import SermonRegistry
 from src.tools.sql_tool import make_sql_tool
 from src.tools.vector_tool import make_vector_tool
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from src.tools.viz_tool import make_viz_tool
+from src.tools.bible_tool import make_bible_tool
 import plotly.io as pio
 from langgraph.prebuilt import create_react_agent
 
@@ -48,11 +49,11 @@ _ensure_ollama()
 try:
     registry = SermonRegistry()
     vector_store = SermonVectorStore()
-    llm = get_llm(temperature=0.1)
 
     sql_tool = make_sql_tool(registry.db_path)
     vector_tool = make_vector_tool(vector_store)
     viz_tool = make_viz_tool(registry)
+    get_bible_versions_tool, search_bible_tool = make_bible_tool(vector_store)
 
     from datetime import date as _date
     _today = _date.today().isoformat()
@@ -62,52 +63,92 @@ try:
         f"You are the BBTC Sermon Intelligence Assistant for Bethesda Bedok-Tampines Church.\n"
         f"Today is {_today}. Archive covers 2015–{_cur_year}. "
         f"'Last N years' → min_year = {_cur_year} - N + 1.\n\n"
-        "## Search approach\n"
-        "For every factual question (content, doctrine, theology, what was preached): "
-        "call sql_query_tool AND search_sermons_tool. Do not stop at one tool. "
-        "Report whatever either tool returns — partial matches are useful context.\n"
-        "For chart requests: use viz_tool only.\n\n"
-        "## Tools\n"
-        "sql_query_tool — Schema:\n"
-        "  sermons(sermon_id, date, year, speaker, topic, theme, summary, key_verse)\n"
-        "  verses(sermon_id, verse_ref, book, chapter, verse_start, verse_end, is_key_verse)\n"
-        "  Most preached book: SELECT ba.canonical, COUNT(*) n FROM verses v "
+
+        "## CRITICAL RULES — follow these before doing anything else\n"
+        "1. YOU MUST CALL A TOOL BEFORE GIVING ANY ANSWER. No exceptions.\n"
+        "2. NEVER answer from memory, training data, or prior knowledge. "
+        "Every fact, name, number, verse, or date in your reply MUST come from a tool result in THIS conversation.\n"
+        "3. If you have not called a tool yet in this turn, STOP and call one now.\n"
+        "4. If tools return no results, say 'I found no records matching that query.' Do not guess or invent data.\n"
+        "5. Do not say 'Based on my knowledge' or 'Typically…' — only 'The database shows…' or 'The search returned…'.\n\n"
+
+        "## Which tool to call\n"
+        "- Counts, lists, statistics, verses, speakers, years → sql_query_tool (ALWAYS call this first)\n"
+        "- Content, doctrine, theology, what was preached → sql_query_tool THEN search_sermons_tool\n"
+        "- Chart/plot/graph requests → viz_tool only\n"
+        "- Translation Audit / compare Bible versions of a verse → get_bible_versions_tool\n"
+        "- Find Bible passages about a topic/theme → search_bible_tool\n\n"
+
+        "## sql_query_tool — ready-to-use queries\n"
+        "Schema: sermons(sermon_id, date, year, language, speaker, topic, theme, summary, key_verse) "
+        "| verses(id, sermon_id, verse_ref, book, chapter, verse_start, verse_end, is_key_verse)\n\n"
+        "Top 5 verses per year:\n"
+        "  SELECT year, verse_ref, cnt FROM ("
+        "SELECT s.year, v.verse_ref, COUNT(*) AS cnt, "
+        "ROW_NUMBER() OVER (PARTITION BY s.year ORDER BY COUNT(*) DESC) AS rn "
+        "FROM verses v JOIN sermons s ON v.sermon_id=s.sermon_id "
+        "GROUP BY s.year, v.verse_ref) WHERE rn<=5 ORDER BY year DESC, rn\n\n"
+        "Most preached book:\n"
+        "  SELECT ba.canonical, COUNT(*) n FROM verses v "
         "LEFT JOIN book_aliases ba ON LOWER(TRIM(v.book))=ba.alias "
-        "WHERE v.book IS NOT NULL GROUP BY ba.canonical ORDER BY n DESC LIMIT 10\n"
-        "  Never preached: SELECT bb.book_name, bb.testament FROM bible_books bb "
+        "WHERE v.book IS NOT NULL GROUP BY ba.canonical ORDER BY n DESC LIMIT 10\n\n"
+        "Never preached:\n"
+        "  SELECT bb.book_name, bb.testament FROM bible_books bb "
         "WHERE bb.book_name NOT IN (SELECT DISTINCT COALESCE(ba.canonical,v.book) FROM verses v "
         "LEFT JOIN book_aliases ba ON LOWER(TRIM(v.book))=ba.alias "
-        "WHERE v.book IS NOT NULL AND v.book!='') ORDER BY bb.book_order\n"
-        "  Favourite verse by speaker: SELECT v.verse_ref, COUNT(*) n FROM verses v "
+        "WHERE v.book IS NOT NULL AND v.book!='') ORDER BY bb.book_order\n\n"
+        "Favourite verse by speaker:\n"
+        "  SELECT v.verse_ref, COUNT(*) n FROM verses v "
         "JOIN sermons s USING(sermon_id) WHERE s.speaker LIKE '%Name%' "
-        "GROUP BY v.verse_ref ORDER BY n DESC LIMIT 5\n"
-        "  Emphasis / themes by year: SELECT year, COUNT(*) sermon_count, "
-        "GROUP_CONCAT(DISTINCT theme) themes FROM sermons "
-        "WHERE year>=2015 AND year IS NOT NULL GROUP BY year ORDER BY year\n"
-        "  Doctrine / BBTC position on X: SELECT topic, speaker, date, summary FROM sermons "
-        "WHERE lower(topic) LIKE '%keyword%' OR lower(summary) LIKE '%keyword%' LIMIT 8 "
-        "(try synonyms: 'once saved' → 'assurance','eternal security'; "
-        "'end times' → 'rapture','tribulation','eschatol')\n\n"
-        "search_sermons_tool — semantic search over sermon text and summaries. "
-        "Use short concept phrases. k=8 for broad topics. Try 2-3 query variants.\n\n"
-        "viz_tool — only for chart requests. Return file path verbatim. "
-        "Valid: sermons_per_speaker · sermons_per_year · verses_per_book · sermons_scatter\n\n"
-        "## Rules\n"
-        "- Never answer from memory. All facts must come from tool results.\n"
-        "- If tools return nothing, say so. Do not speculate.\n"
+        "GROUP BY v.verse_ref ORDER BY n DESC LIMIT 5\n\n"
+        "Themes by year:\n"
+        "  SELECT year, COUNT(*) sermon_count, GROUP_CONCAT(DISTINCT theme) themes "
+        "FROM sermons WHERE year>=2015 AND year IS NOT NULL GROUP BY year ORDER BY year\n\n"
+        "Doctrine search (try synonyms):\n"
+        "  SELECT topic, speaker, date, summary FROM sermons "
+        "WHERE lower(topic) LIKE '%keyword%' OR lower(summary) LIKE '%keyword%' LIMIT 8\n\n"
+
+        "## search_sermons_tool\n"
+        "Semantic search over sermon text and summaries. "
+        "Use short concept phrases (3-5 words). k=8 for broad topics. Try 2-3 query variants.\n\n"
+
+        "## get_bible_versions_tool\n"
+        "Returns all Bible translations (NIV, ESV, ASV) of a specific verse from the bible archive. "
+        "Pass the canonical reference exactly: 'Book Chapter:Verse' (e.g. '1 John 1:9'). "
+        "Use for Translation Audit requests or any question comparing Bible versions.\n\n"
+
+        "## search_bible_tool\n"
+        "Semantic search over the full Bible archive. "
+        "Use for 'find passages about forgiveness', 'verses on hope', etc. "
+        "Use short concept phrases (3-6 words).\n\n"
+
+        "## viz_tool\n"
+        "Only for explicit chart requests. Return the file path verbatim in your answer.\n"
+        "Valid chart types: sermons_per_speaker · sermons_per_year · verses_per_book · sermons_scatter\n"
     )
 
-    agent = create_react_agent(
-        llm,
-        tools=[sql_tool, vector_tool, viz_tool],
-        prompt=SystemMessage(content=SYSTEM_PROMPT),
-    )
+    _agent_cache: dict = {}
+
+    def get_agent(provider: str = "ollama"):
+        if provider not in _agent_cache:
+            _llm = get_llm(provider=provider, temperature=0.1)
+            _agent_cache[provider] = create_react_agent(
+                _llm,
+                tools=[sql_tool, vector_tool, viz_tool, get_bible_versions_tool, search_bible_tool],
+                prompt=SystemMessage(content=SYSTEM_PROMPT),
+            )
+        return _agent_cache[provider]
+
+    # Pre-warm Ollama agent at startup
+    get_agent("ollama")
+    _init_ok = True
 
 except Exception as e:
     print(f"⚠️ Initialization warning: {e}")
-    agent = None
+    _init_ok = False
     registry = None
     vector_store = None
+    get_agent = None
 
 _stats_bar_html = (
     render_stats_bar(fetch_archive_stats(registry.db_path))
@@ -115,10 +156,33 @@ _stats_bar_html = (
     else render_stats_bar(None)
 )
 
+_ollama_status = "online" if (vector_store and vector_store._embeddings is not None) else "offline"
 
-def respond(message, history):
-    if agent is None:
+
+def _inference_badge_html(provider: str) -> str:
+    if provider == "groq":
+        has_key = bool(os.getenv("GROQ_API_KEY"))
+        status = "online" if has_key else "offline"
+        label = f"groq · {GROQ_MODEL}" if has_key else "groq · no key"
+    else:
+        status = _ollama_status
+        label = "ollama · local"
+    return (
+        "<div style='display:flex;justify-content:space-between;align-items:center;margin-top:8px;'>"
+        f"<span style='color:#94a3b8;'>Inference</span>"
+        f"<span class='status-badge status-{status}'>{label}</span>"
+        "</div>"
+    )
+
+
+def respond(message, history, provider="ollama"):
+    if not _init_ok or get_agent is None:
         return "⚠️ Agent not initialized. Check that Ollama is running."
+
+    try:
+        agent = get_agent(provider)
+    except Exception as e:
+        return f"⚠️ Could not load {provider} agent: {e}"
 
     truncated_history = history[-2:] if len(history) > 2 else history
     messages = []
@@ -128,7 +192,6 @@ def respond(message, history):
         else:
             content = turn["content"]
             if isinstance(content, list):
-                # Handle complex content (text + plot)
                 text_parts = [block.get("text", "") for block in content if block.get("type") == "text"]
                 content = " ".join(text_parts)
             messages.append(AIMessage(content=content))
@@ -430,20 +493,15 @@ with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
 
             gr.Examples(
                 examples=[
-                    ["Trend analysis: Plot the number of sermons preached per year since 2010."],
-                    ["Speaker breakdown: Create a stacked bar chart of sermon counts by speaker per year."],
-                    ["Scripture coverage: Show a heatmap of Bible books most frequently preached."],
-        
-                     # Qualitative / Doctrine Intent
-                    ["Doctrine: What is BBTC's theological position on 'Once Saved, Always Saved'?"],
-                    ["Eschatology: Explain the believed sequence of End Times events."],
-                    ["Evolution of Themes: Compare the primary ministry focus in 2015 versus today."],
-        
-                    # Specific Content Search
-                    ["Find the top 3 sermons related to 'Spiritual Warfare' from the last two years."],
-                    ["Which Minor Prophets have not been the focus of a sermon in the last 5 years?"],
-                    ["Summarize the 5 most frequent emphasized Bible verses in BBTC sermons."],
-                    ["Search for all mentions of 'Mental Health' and categorize the biblical advice given."]
+                    ["Scripture Coverage: Generate a frequency heatmap of the most frequently preached Bible books."],
+                    ["Gap Analysis: List all Bible books that have never been preached in BBTC sermons."],
+                    ["Semantic Analysis: Identify shifts in ministry emphasis within BBTC over the last 5 years."],
+                    ["BBTC Theology: Explain the biblical sequence of End Times events based on BBTC teachings."],
+                    ["Semantic Search: Find the top 3 sermons related to 'Spiritual Warfare' from 2024 to 2026."],
+                    ["Specific Sermon: Content: Summarize the key message and scripture shared in last week's sermon."],
+                    ["Bible Translation: List all Bible translations of 1 John 1:9 in the bible archives."],
+                    ["Speaker Filter: List all sermons delivered by SP Chua Seng Lee in the year 2026."],
+                    ["Categorization: Search for all mentions of 'Mental Health' and categorize the biblical advice given."]
                 ],
                 inputs=msg,
                 label="Example questions"
@@ -453,7 +511,6 @@ with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
             gr.Markdown("### System Health")
 
             vec_status = "online" if vector_store else "offline"
-            ollama_status = "online" if (vector_store and vector_store._embeddings is not None) else "offline"
             gr.HTML(f"""
                 <div style='display: flex; flex-direction: column; gap: 12px;'>
                     <div style='display: flex; justify-content: space-between; align-items: center;'>
@@ -464,12 +521,19 @@ with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
                         <span style='color: #94a3b8;'>SQL Registry</span>
                         <span class='status-badge status-online'>active</span>
                     </div>
-                    <div style='display: flex; justify-content: space-between; align-items: center;'>
-                        <span style='color: #94a3b8;'>Inference</span>
-                        <span class='status-badge status-{ollama_status}'>ollama</span>
-                    </div>
                 </div>
             """)
+            inference_status = gr.HTML(_inference_badge_html("ollama"))
+
+            gr.Markdown("---")
+            gr.Markdown("### Inference Engine")
+            provider_radio = gr.Radio(
+                choices=["Ollama (local)", "Groq (cloud)"],
+                value="Ollama (local)",
+                show_label=False,
+                interactive=True,
+            )
+            provider_state = gr.State("ollama")
 
             gr.Markdown("---")
             gr.Markdown("### Capabilities")
@@ -483,18 +547,28 @@ with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
             gr.Markdown("---")
             clear = gr.Button("Clear Chat", variant="secondary")
 
+    def _on_provider_change(radio_val):
+        provider = "groq" if "Groq" in radio_val else "ollama"
+        return provider, _inference_badge_html(provider)
+
+    provider_radio.change(
+        _on_provider_change,
+        inputs=provider_radio,
+        outputs=[provider_state, inference_status],
+    )
+
     def user_msg(user_message, history: list):
         if history is None:
             history = []
         return "", history + [{"role": "user", "content": user_message}]
 
-    def bot_msg(history: list):
+    def bot_msg(history: list, provider: str):
         if not history or history[-1]["role"] != "user":
             return history
 
         user_message = history[-1]["content"]
         chat_history = history[:-1]
-        bot_message = respond(user_message, chat_history)
+        bot_message = respond(user_message, chat_history, provider)
 
         text, chart_path = extract_chart_path(bot_message)
         
@@ -525,14 +599,14 @@ with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
     msg.submit(user_msg, [msg, chatbot], [msg, chatbot], queue=True).then(
         disable_submit, None, submit
     ).then(
-        bot_msg, [chatbot], chatbot
+        bot_msg, [chatbot, provider_state], chatbot
     ).then(
         enable_submit, None, submit
     )
     submit.click(user_msg, [msg, chatbot], [msg, chatbot], queue=True).then(
         disable_submit, None, submit
     ).then(
-        bot_msg, [chatbot], chatbot
+        bot_msg, [chatbot, provider_state], chatbot
     ).then(
         enable_submit, None, submit
     )

@@ -65,9 +65,9 @@ BOOK_MAP: dict[str, str] = {
     "james": "James",
     "1 peter": "1 Peter", "1peter": "1 Peter", "1pet": "1 Peter",
     "2 peter": "2 Peter", "2peter": "2 Peter", "2pet": "2 Peter",
-    "1 john": "1 John", "1john": "1 John", "1jn": "1 John",
-    "2 john": "2 John", "2john": "2 John", "2jn": "2 John",
-    "3 john": "3 John", "3john": "3 John", "3jn": "3 John",
+    "1 john": "1 John", "1john": "1 John", "1jn": "1 John", "1 jn": "1 John",
+    "2 john": "2 John", "2john": "2 John", "2jn": "2 John", "2 jn": "2 John",
+    "3 john": "3 John", "3john": "3 John", "3jn": "3 John", "3 jn": "3 John",
     "jude": "Jude",
     "revelation": "Revelation", "rev": "Revelation", "revelations": "Revelation",
 }
