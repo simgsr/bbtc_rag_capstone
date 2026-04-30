@@ -38,7 +38,8 @@
       "Bash(/Users/simgsr/Documents/simgsr-ntu/capstone/structure_db_rag/.venv/bin/python -m pytest tests/test_file_classifier.py -v)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:api.github.com)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(gh auth *)"
     ]
   }
 }

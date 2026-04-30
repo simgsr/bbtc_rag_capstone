@@ -672,7 +672,7 @@ with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
     clear.click(lambda: [], None, chatbot, queue=False)
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 7860))
+    port = int(os.getenv("PORT", 0)) or None
     demo.launch(
         server_name="0.0.0.0",
         server_port=port,
