@@ -1,6 +1,8 @@
 # src/scraper/bbtc_scraper.py
 from pandas.core.tools.datetimes import to_datetime
 import os
+import sys
+from pathlib import Path
 import cloudscraper
 import re
 import unicodedata
@@ -9,6 +11,10 @@ from datetime import datetime, timezone
 import fitz  # PyMuPDF
 from docx import Document
 from pptx import Presentation
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT_DIR))
+
 from src.storage.sqlite_store import SermonRegistry
 from src.ingestion.file_classifier import classify_file
 import urllib.parse
