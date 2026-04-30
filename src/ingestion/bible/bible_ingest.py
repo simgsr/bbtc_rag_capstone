@@ -63,6 +63,8 @@ SCROLLMAPPER_VERSIONS: dict[str, str] = {
     "BBE": "Bible in Basic English",
 }
 
+import glob
+
 # Local EPUB files (owned, copyrighted)
 LOCAL_EPUB_VERSIONS: dict[str, str] = {
     "NIV": "data/bibles/NIV.epub",
@@ -71,6 +73,18 @@ LOCAL_EPUB_VERSIONS: dict[str, str] = {
 
 # Default set to ingest
 DEFAULT_VERSIONS = ["KJV", "ASV", "YLT", "NIV", "ESV"]
+
+# Auto-detect other EPUBs in data/bibles/
+for epub_file in glob.glob("data/bibles/*.epub"):
+    import os
+    filename = os.path.basename(epub_file)
+    version_id = os.path.splitext(filename)[0].upper()
+    # Don't override if already exists with a different path (like ESV)
+    if version_id not in LOCAL_EPUB_VERSIONS and "ESV" not in filename:
+        LOCAL_EPUB_VERSIONS[version_id] = epub_file
+        if version_id not in DEFAULT_VERSIONS:
+            DEFAULT_VERSIONS.append(version_id)
+
 
 
 # ── Verse dict format ─────────────────────────────────────────────────────────
@@ -173,6 +187,19 @@ def _upsert_verses(store: SermonVectorStore, verses: list[dict], logger=print):
 
 # ── SQLite bible_versions tracking ───────────────────────────────────────────
 
+def _is_indexed(db_path: str, version_id: str) -> bool:
+    try:
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.execute(
+                "SELECT status FROM bible_versions WHERE version_id=?", (version_id,)
+            )
+            row = cursor.fetchone()
+            if row and row[0] == "indexed":
+                return True
+    except sqlite3.OperationalError:
+        pass
+    return False
+
 def _mark_indexed(db_path: str, version_id: str, source: str):
     with sqlite3.connect(db_path) as conn:
         conn.execute("""
@@ -187,7 +214,6 @@ def _mark_indexed(db_path: str, version_id: str, source: str):
             "INSERT OR REPLACE INTO bible_versions VALUES (?,?,?,?)",
             (version_id, source, "indexed", datetime.utcnow().isoformat()),
         )
-
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
 
@@ -216,6 +242,10 @@ def ingest_bible(
         store = SermonVectorStore(persist_dir=chroma_dir)
 
     for version_id in versions:
+        if not wipe and _is_indexed(db_path, version_id):
+            logger(f"  ⏭️  Skipping {version_id} (already indexed)")
+            continue
+
         logger(f"\n📖 Ingesting {version_id} ...")
 
         if version_id in SCROLLMAPPER_VERSIONS:

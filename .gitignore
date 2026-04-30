@@ -19,7 +19,9 @@ env/
 !.env.example
 
 # --- Runtime data (never commit) ---
-data/
+data/**
+!data/**/
+!data/**/.gitkeep
 models/
 .dagster_home/
 .tmp_dagster_home_*/

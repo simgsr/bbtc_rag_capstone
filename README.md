@@ -164,7 +164,7 @@ make scrape
 make ingest
 
 # Dagster web UI — weekly Saturday scheduler
-DAGSTER_HOME=$(mktemp -d) dagster dev -m dagster_pipeline
+make dagster
 ```
 
 ---
