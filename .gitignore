@@ -20,6 +20,7 @@ env/
 
 # --- Runtime data (never commit) ---
 data/
+models/
 .dagster_home/
 .tmp_dagster_home_*/
 

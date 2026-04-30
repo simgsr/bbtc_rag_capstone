@@ -220,14 +220,26 @@ def run_pipeline(wipe: bool = False, year: int | None = None, incremental: bool 
         incremental = False
 
     if not os.path.isdir(STAGING_DIR):
-        print(f"❌ Staging directory not found: {STAGING_DIR}")
-        sys.exit(1)
+        print(f"⚠️ Staging directory not found. Creating {STAGING_DIR}...")
+        os.makedirs(STAGING_DIR, exist_ok=True)
+        print("💡 Hint: Run 'make scrape' to download sermon files before ingesting.")
+        sys.exit(0)
 
     all_files = os.listdir(STAGING_DIR)
+    if not all_files:
+        print(f"⚠️ Staging directory ({STAGING_DIR}) is empty.")
+        print("💡 Hint: Run 'make scrape' to download sermon files before ingesting.")
+        sys.exit(0)
+
     if year:
         all_files = [f for f in all_files if f"_{year}_" in f]
     # Only NG and PS
     sermon_files = [f for f in all_files if classify_file(f) in ("ng", "ps")]
+    if not sermon_files:
+        print("⚠️ No valid NG/PS files found in staging.")
+        print("💡 Hint: Run 'make scrape' to download sermon files before ingesting.")
+        sys.exit(0)
+
     print(f"📁 Found {len(sermon_files)} NG/PS files in staging/")
 
     groups = group_sermon_files(sermon_files)

@@ -104,32 +104,31 @@ The pipeline pairs these by date proximity and topic overlap before ingestion.
 
 - Python 3.11+
 - [Ollama](https://ollama.ai) running locally
+- Make (comes pre-installed on macOS/Linux)
 
 ```bash
 ollama pull bge-m3           # embeddings — 1.2 GB, multilingual
 ollama pull gemma4:latest    # LLM — metadata extraction, summarisation, chat
 ```
 
-### Install and run
+### Install and run (One-Click Setup)
+
+We have provided a `Makefile` to handle environment creation, dependency installation, scraping, and ingestion automatically.
 
 ```bash
 git clone <repo-url>
-cd structure_db_rag
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env         # optional: add GROQ_API_KEY for cloud inference fallback
+cd bbtc_rag_capstone
 
-# Scrape sermons from the BBTC website (one year at a time)
-python src/scraper/bbtc_scraper.py 2024
-
-# Full ingest from scratch
-python ingest.py --wipe
+# Full setup (installs deps, scrapes current year, ingests data)
+make setup
 
 # Launch the Gradio chat UI
-python app.py
+make run
 ```
 
 Open [http://localhost:7860](http://localhost:7860).
+
+*Note: Missing directories (like `data/staging`, `data/sermons.db`, or `data/chroma_db`) are created automatically during setup.*
 
 ### Bible archive (optional)
 
@@ -152,18 +151,17 @@ python -m src.ingestion.bible.bible_ingest --versions KJV ASV YLT
 
 ## Data Pipeline
 
+For more granular control, you can run individual `make` commands or direct python scripts:
+
 ```bash
+# Set up virtual environment and install dependencies
+make install
+
+# Scrape current year's sermons (or specify: YEAR=2024 make scrape)
+make scrape
+
 # Full sermon ingest from scratch (wipe + rebuild)
-python ingest.py --wipe
-
-# Incremental ingest (new files only)
-python ingest.py
-
-# Ingest a specific year
-python ingest.py --year 2024
-
-# Scrape a single year from the BBTC website
-python src/scraper/bbtc_scraper.py 2024
+make ingest
 
 # Dagster web UI — weekly Saturday scheduler
 DAGSTER_HOME=$(mktemp -d) dagster dev -m dagster_pipeline

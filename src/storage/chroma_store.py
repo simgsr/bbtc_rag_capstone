@@ -1,9 +1,11 @@
 # src/storage/chroma_store.py
 import chromadb
+import os
 from src.storage.reranker import Reranker
 
 class SermonVectorStore:
     def __init__(self, persist_dir: str = "data/chroma_db", embeddings=None):
+        os.makedirs(persist_dir, exist_ok=True)
         self._client = chromadb.PersistentClient(path=persist_dir)
         if embeddings is not None:
             self._embeddings = embeddings

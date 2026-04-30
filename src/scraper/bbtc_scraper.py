@@ -15,7 +15,6 @@ from pptx import Presentation
 ROOT_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT_DIR))
 
-from src.storage.sqlite_store import SermonRegistry
 from src.ingestion.file_classifier import classify_file
 import urllib.parse
 
@@ -31,11 +30,9 @@ class BBTCScraper:
         self,
         download_dir: str = "data/sermons",
         staging_dir: str = "data/staging",
-        registry: SermonRegistry | None = None,
     ):
         self._download_dir = download_dir
         self._staging_dir = staging_dir
-        self._registry = registry or SermonRegistry()
         self._scraper = cloudscraper.create_scraper()
         os.makedirs(download_dir, exist_ok=True)
         os.makedirs(staging_dir, exist_ok=True)
@@ -110,12 +107,14 @@ class BBTCScraper:
         return self._clean_text(text), quality
 
     def _process_link(self, url: str, year: int, lang: str):
-        if not self._registry.is_new(url):
-            return
-
         basename = os.path.basename(url.split('?')[0])
         basename = urllib.parse.unquote(basename)
         filename = f"{lang}_{year}_{basename}"
+        
+        staging_path = os.path.join(self._staging_dir, filename)
+        if os.path.exists(staging_path):
+            print(f"⏭️  Already in staging: {filename}")
+            return
 
         # Skip handout files before downloading
         if classify_file(filename) == "handout":
@@ -139,30 +138,13 @@ class BBTCScraper:
         
         if quality == "failed":
             print(f"⚠️  Extraction failed for {filename}")
-            status = "failed"
         else:
             # Save extracted text to a file in download_dir
             text_filename = os.path.splitext(filename)[0] + ".txt"
             text_path = os.path.join(self._download_dir, text_filename)
             with open(text_path, "w", encoding="utf-8") as f:
                 f.write(extracted_text)
-            status = "extracted"
             print(f"📝 Saved text: {text_filename}")
-
-        # Update registry
-        sermon_id = re.sub(r"\W+", "_", filename)
-        record = {
-            "sermon_id": sermon_id,
-            "filename": filename,
-            "url": url,
-            "language": lang,
-            "year": year,
-            "status": status,
-            "date_scraped": datetime.now(timezone.utc).isoformat(),
-            "file_type": os.path.splitext(filename)[1].lstrip(".")
-        }
-        self._registry.insert_sermon(record)
-        self._registry.mark_processed(url)
 
     def scrape_year(self, year: int, lang: str = "English"):
         url = self._archive_url(year, lang)

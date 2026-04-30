@@ -1,6 +1,6 @@
 from sentence_transformers import CrossEncoder
 
-_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+_MODEL_NAME = "models/bge-reranker-v2-m3"
 
 
 class Reranker:
