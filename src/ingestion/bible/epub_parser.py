@@ -76,6 +76,8 @@ class BibleEpubParser:
                 current_v_parts = []
                 return
             text = re.sub(r'\s+', ' ', " ".join(current_v_parts)).strip()
+            # Strip leading "chapter:verse" inline marker (ESV format: "2 :1 text…")
+            text = re.sub(r'^\d+\s*:\s*\d+\s+', '', text)
             # Strip leading verse number artifact ("7 " or "7:")
             text = re.sub(rf'^{re.escape(str(current_v_num))}[:\s]+', '', text).strip()
             if text and len(text) >= 3:
@@ -150,6 +152,21 @@ class BibleEpubParser:
                     if current_v_num is not None:
                         current_v_parts.append(raw)
                     continue
+
+                # ESV EPUBs pack multiple chapters per HTML file; each new chapter's
+                # first verse begins with "N :1 text…" in plain text (no <sup> for v1).
+                _esv_ch = re.match(r'^(\d{1,3})\s*:\s*1\b', raw)
+                if _esv_ch:
+                    _cand_ch = int(_esv_ch.group(1))
+                    if _cand_ch != current_chapter and 1 <= _cand_ch <= 150:
+                        flush()
+                        current_chapter = _cand_ch
+                        current_v_num = 1
+                        current_v_parts = []
+                    elif _cand_ch == current_chapter and current_v_num is None:
+                        # First verse of the initial chapter (e.g. ch1 verse 1)
+                        current_v_num = 1
+                        current_v_parts = []
 
                 # Reconstruct verse texts by splitting on <sup> boundaries
                 # Strategy: serialize the paragraph as a flat list of tokens
