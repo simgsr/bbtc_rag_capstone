@@ -19,3 +19,4 @@ gradio
 matplotlib
 langgraph
 ebooklib
+plotly

@@ -44,14 +44,26 @@ def make_vector_tool(vector_store: SermonVectorStore):
         if not results:
             return "No relevant sermon content found."
 
-        parts = []
+        sermons = {}
         for res in results:
             m = res.get("metadata") or {}
-            header = (
-                f"[{m.get('topic') or 'Unknown Topic'} | {m.get('speaker') or 'Unknown'} "
-                f"| {m.get('date') or ''} | {m.get('key_verse') or ''}]"
+            key = (
+                m.get("topic") or "Unknown Topic",
+                m.get("speaker") or "Unknown",
+                m.get("date") or "",
+                m.get("key_verse") or ""
             )
-            parts.append(f"{header}\n{res['content']}")
+            if key not in sermons:
+                sermons[key] = []
+            if res["content"] not in sermons[key]:
+                sermons[key].append(res["content"])
+
+        parts = []
+        for key, contents in sermons.items():
+            topic, speaker, date, key_verse = key
+            header = f"[{topic} | {speaker} | {date} | {key_verse}]"
+            merged_content = "\n\n... [another excerpt from same sermon] ...\n\n".join(contents)
+            parts.append(f"{header}\n{merged_content}")
 
         return "\n\n---\n\n".join(parts)
 

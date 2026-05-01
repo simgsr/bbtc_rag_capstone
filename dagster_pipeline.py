@@ -18,10 +18,13 @@ from src.scraper.bbtc_scraper import BBTCScraper
 @asset
 def sermon_scraping(context: AssetExecutionContext):
     """Scrape the BBTC website for new sermons."""
-    year = datetime.now().year
-    context.log.info(f"Starting scraper for year {year}...")
+    current_year = datetime.now().year
     scraper = BBTCScraper()
-    scraper.scrape_year(year)
+    
+    for year in range(2015, current_year + 1):
+        context.log.info(f"Starting scraper for year {year}...")
+        scraper.scrape_year(year)
+        
     context.log.info("Scraping complete.")
     return MetadataValue.text("done")
 
