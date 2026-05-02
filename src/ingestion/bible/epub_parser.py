@@ -112,15 +112,40 @@ class BibleEpubParser:
                     continue
 
                 # ── Determine if this paragraph has inline verse numbers ─────────
-                sups = para.find_all('sup')
-                sup_verse_nums: list[int] = [
-                    int(s.get_text()) for s in sups
-                    if s.get_text().strip().isdigit() and 1 <= int(s.get_text().strip()) <= 200
-                ]
+                sups = para.find_all(['sup', 'big'])
+                # Also check for <b> tags that might contain the first verse marker like "1:1"
+                bs = para.find_all('b')
+                
+                # A paragraph might start with "ChapterNum:VerseNum" e.g. "2:1"
+                # We check the very beginning of the paragraph text.
+                chapter_verse_match = re.match(r'^(\d+)\s*:\s*(\d+)', raw)
+                if chapter_verse_match:
+                    new_ch = int(chapter_verse_match.group(1))
+                    new_v = int(chapter_verse_match.group(2))
+                    if new_ch != current_chapter:
+                        flush()
+                        current_chapter = new_ch
+                        # We don't continue here because this paragraph contains the verse text.
+
+                sup_verse_nums: list[int] = []
+                for s in sups:
+                    t = s.get_text().strip()
+                    if t.isdigit() and 1 <= int(t) <= 200:
+                        sup_verse_nums.append(int(t))
+                
+                for b in bs:
+                    # Look for "2:1" inside a <b> tag
+                    bm = re.search(r'(\d+)\s*:\s*(\d+)', b.get_text())
+                    if bm:
+                        new_ch = int(bm.group(1))
+                        if new_ch != current_chapter:
+                            flush()
+                            current_chapter = new_ch
+                        sup_verse_nums.append(int(bm.group(2)))
 
                 # Only check for chapter/book headers on paragraphs WITHOUT verse markers.
                 # This prevents false matches on words like "mark", "Titus", "Ruth" in verse text.
-                if not sup_verse_nums:
+                if not sup_verse_nums and not chapter_verse_match:
                     bm = _BOOK_PAT.search(raw)
                     if bm:
                         cand = _canonical_book(bm.group(1))
@@ -145,39 +170,55 @@ class BibleEpubParser:
                 if current_book == "Unknown" or current_chapter == 0:
                     continue
 
-                if not sup_verse_nums:
+                if not sup_verse_nums and not chapter_verse_match:
                     # No verse-number markers — plain continuation text
                     if current_v_num is not None:
                         current_v_parts.append(raw)
                     continue
 
-                # Reconstruct verse texts by splitting on <sup> boundaries
-                # Strategy: serialize the paragraph as a flat list of tokens
-                tokens: list[str] = []   # ("V", num) or ("T", text)
+                # Reconstruct verse texts by splitting on verse boundaries
+                tokens: list[tuple[str, int | str]] = []   # ("V", num) or ("T", text)
+                
+                # We need to be careful with descendants. 
+                # For ESV, a chapter start looks like: <b><big>2</big>:1</b>
                 for child in para.descendants:
-                    if child.name is not None:  # it's a Tag
-                        if child.name == 'sup':
-                            t = child.get_text().strip()
-                            if t.isdigit():
-                                v = int(t)
-                                if 1 <= v <= 200:
-                                    tokens.append(('V', v))
-                    else:  # NavigableString (name is None)
+                    if child.name in ('sup', 'big', 'b'):
+                        t = child.get_text().strip()
+                        # Match "1:1" or just "1"
+                        m = re.search(r'(?:(\d+)\s*:\s*)?(\d+)', t)
+                        if m:
+                            v_num = int(m.group(2))
+                            if 1 <= v_num <= 200:
+                                # If it's a "Chapter:Verse" marker, update chapter
+                                if m.group(1):
+                                    ch_num = int(m.group(1))
+                                    if ch_num != current_chapter:
+                                        # Note: we don't flush here yet, we'll flush when we process the 'V' token
+                                        current_chapter = ch_num
+                                
+                                # Only add 'V' token if this tag doesn't contain other tags 
+                                # (to avoid double counting if it's <b><sup>2</sup></b>)
+                                if not child.find(['sup', 'big', 'b']):
+                                    tokens.append(('V', v_num))
+                    elif child.name is None:  # NavigableString
                         t = str(child).strip()
                         if t:
-                            # Skip bare digit strings that came from inside <sup>
-                            if child.parent and child.parent.name == 'sup':
-                                continue
+                            # Skip strings that are purely verse markers we already handled
+                            if child.parent and child.parent.name in ('sup', 'big', 'b'):
+                                # If the parent is a tag we handled, and this string is just part of it, skip.
+                                # But be careful: if <b>2:1</b> contains the text "2:1", we skip it.
+                                if re.fullmatch(r'(?:\d+\s*:\s*)?\d+\s*', t):
+                                    continue
                             tokens.append(('T', t))
 
                 for tok_type, tok_val in tokens:
                     if tok_type == 'V':
                         flush()
-                        current_v_num = tok_val
+                        current_v_num = int(tok_val)
                         current_v_parts = []
                     else:
                         if current_v_num is not None:
-                            current_v_parts.append(tok_val)
+                            current_v_parts.append(str(tok_val))
 
         flush()
         return list(verses_dict.values())
