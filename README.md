@@ -3,6 +3,8 @@
 > **Capstone Project — NTU MSCS 2026**
 > A production-grade Hybrid Agentic RAG pipeline over a decade of church sermon archives.
 
+📚 800 sermons &nbsp;·&nbsp; 👤 35 speakers &nbsp;·&nbsp; 📅 2015 – 2026 &nbsp;·&nbsp; 🌐 1 languages
+
 A fully local, privacy-preserving AI system that ingests, indexes, and answers natural-language questions about the BBTC (Bethesda Bedok-Tampines Church) sermon archive from 2015 to present. Built end-to-end: from PDF scraping through LLM-powered metadata extraction, dual-layer storage, and a ReAct agent that intelligently routes queries between SQL, vector search, visualisation, and Bible lookup tools.
 
 ---

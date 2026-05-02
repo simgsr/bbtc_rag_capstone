@@ -55,6 +55,14 @@ class TestParseCellGuideFilename:
         )
         assert r["date"] == "2015-07-25"
 
+    def test_date_range_with_new_month_year(self):
+        # This filename caused the 2001 bug because '01' in '01-Dec' was taken as year
+        r = parse_cell_guide_filename(
+            "English_2019_30-Nov-01-Dec-2019-T3-to-Maturity-by-E-Goh-Hock-Chye-Members-Guide.pdf"
+        )
+        # It now correctly skips '01' as a year and finds the full date later
+        assert r["date"] == "2019-12-01"
+
 
 class TestExtractAnyDate:
     def test_iso_date_in_camelcase_filename(self):

@@ -78,7 +78,7 @@ def _parse_leading_date(s: str) -> tuple[str | None, str]:
         r'[-_]?(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may'
         r'|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?'
         r'|nov(?:ember)?|dec(?:ember)?)[a-z]*'
-        r'[-_]?(20\d{2})?[-_]?',
+        r'[-_]?(20\d{2}|[12]\d)?[-_]?',
         s.lower(),
     )
     if not m:
@@ -105,7 +105,7 @@ def _search_date_month_year(s: str) -> str | None:
         r'(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may'
         r'|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?'
         r'|nov(?:ember)?|dec(?:ember)?)[a-z]*'
-        r'[-_]?(20\d{2}|\d{2})\b',
+        r'[-_]?(20\d{2}|[12]\d)\b',
         s, flags=re.IGNORECASE,
     )
     if not m:
@@ -157,6 +157,9 @@ def parse_cell_guide_filename(filename: str) -> dict:
                 else:
                     topic = _smart_title(after.replace('-', ' ').strip()) or None
                     speaker = speaker_from_filename(filename)
+
+        if not date_str:
+            date_str = extract_any_date(filename)
 
         return {"speaker": speaker, "date": date_str, "topic": topic or None}
 
