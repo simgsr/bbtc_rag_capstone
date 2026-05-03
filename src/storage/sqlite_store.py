@@ -170,6 +170,10 @@ class SermonRegistry:
                 (status, sermon_id),
             )
 
+    def delete_verses(self, sermon_id: str):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM verses WHERE sermon_id = ?", (sermon_id,))
+
     def wipe(self):
         with sqlite3.connect(self.db_path) as conn:
             conn.executescript(

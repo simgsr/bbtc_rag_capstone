@@ -84,15 +84,15 @@ def _detect_language(filename: str) -> str:
 
 
 def process_group(group, registry: SermonRegistry, vector_store: SermonVectorStore,
-                  llm, splitter: RecursiveCharacterTextSplitter, incremental: bool):
+                  llm, splitter: RecursiveCharacterTextSplitter, incremental: bool, force: bool = False):
     ng_file = group.ng
     ps_files = group.ps
 
     if not ng_file and not ps_files:
         return
 
-    # Skip if already indexed in incremental mode
-    if incremental and ng_file and registry.ng_file_indexed(ng_file):
+    # Skip if already indexed in incremental mode (unless force is True)
+    if incremental and not force and ng_file and registry.ng_file_indexed(ng_file):
         return
 
     ng_path = os.path.join(STAGING_DIR, ng_file) if ng_file else None
@@ -117,24 +117,37 @@ def process_group(group, registry: SermonRegistry, vector_store: SermonVectorSto
         ps_path = os.path.join(STAGING_DIR, pf)
         ps_text_combined += extract_ps_text(ps_path) + "\n"
 
-    # LLM verse extraction from PS text (if text available and no filename verses)
-    if ps_text_combined.strip() and not all_verses:
+    # LLM verse extraction from PS text (always try if text is available)
+    if ps_text_combined.strip() and llm:
         llm_verse_refs = extract_verses_from_text(ps_text_combined, llm)
+        
+        # De-duplicate: track existing normalized refs
+        # We normalize by removing spaces and lowercasing
+        existing_refs = {v["verse_ref"].lower().replace(" ", "") for v in all_verses}
+
         for ref in llm_verse_refs:
+            norm_ref = ref.lower().replace(" ", "")
+            if norm_ref in existing_refs:
+                continue
+            
             m = re.match(r'^(\w+(?:\s\w+)?)\s+(\d+)(?::(\d+)(?:-(\d+))?)?$', ref)
             if m:
                 canonical_book = normalize_book(m.group(1))
                 if canonical_book is None:
                     continue
                 all_verses.append({
-                    "verse_ref": ref, "book": canonical_book,
+                    "verse_ref": ref, 
+                    "book": canonical_book,
                     "chapter": int(m.group(2)),
                     "verse_start": int(m.group(3)) if m.group(3) else None,
                     "verse_end": int(m.group(4)) if m.group(4) else None,
                     "is_key_verse": 0,
                 })
-        if all_verses:
-            all_verses[0]["is_key_verse"] = 1
+                existing_refs.add(norm_ref)
+
+    # If we found verses but none are marked as key, mark the first one
+    if all_verses and not any(v.get("is_key_verse") for v in all_verses):
+        all_verses[0]["is_key_verse"] = 1
 
     key_verse = all_verses[0]["verse_ref"] if all_verses else None
     verse_refs = [v["verse_ref"] for v in all_verses]
@@ -143,6 +156,10 @@ def process_group(group, registry: SermonRegistry, vector_store: SermonVectorSto
     summary = _generate_summary(ng_body, topic, theme, speaker, verse_refs, ps_text_combined, llm)
 
     sermon_id = _make_sermon_id(date, topic, ng_file or (ps_files[0] if ps_files else "unknown"))
+
+    if force:
+        print(f"  🔄 Force re-ingesting {sermon_id}...")
+        registry.delete_verses(sermon_id)
 
     print(f"  📖 {sermon_id} | {speaker} | {date} | {key_verse}")
 
@@ -199,7 +216,7 @@ def process_group(group, registry: SermonRegistry, vector_store: SermonVectorSto
     registry.mark_status(sermon_id, "indexed")
 
 
-def run_pipeline(wipe: bool = False, year: int | None = None, incremental: bool = True):
+def run_pipeline(wipe: bool = False, year: int | None = None, incremental: bool = True, force: bool = False):
     print("🚀 BBTC Sermon Ingestion Pipeline")
 
     registry = SermonRegistry(db_path=DB_PATH)
@@ -251,10 +268,10 @@ def run_pipeline(wipe: bool = False, year: int | None = None, incremental: bool 
     for group in groups:
         try:
             ng = group.ng
-            if incremental and ng and registry.ng_file_indexed(ng):
+            if incremental and not force and ng and registry.ng_file_indexed(ng):
                 skipped += 1
                 continue
-            process_group(group, registry, vector_store, llm, splitter, incremental)
+            process_group(group, registry, vector_store, llm, splitter, incremental, force)
             indexed += 1
         except Exception as e:
             print(f"  ❌ Error: {e}")
@@ -269,5 +286,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="BBTC Sermon Ingestion Pipeline")
     parser.add_argument("--wipe", action="store_true", help="Wipe and rebuild from scratch")
     parser.add_argument("--year", type=int, help="Process only files for this year")
+    parser.add_argument("--force", action="store_true", help="Re-process even if already indexed (without full wipe)")
     args = parser.parse_args()
-    run_pipeline(wipe=args.wipe, year=args.year, incremental=not args.wipe)
+    run_pipeline(wipe=args.wipe, year=args.year, incremental=not args.wipe, force=args.force)

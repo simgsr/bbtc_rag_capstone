@@ -55,7 +55,7 @@ _BOOK_PATTERN = "|".join(sorted(_BOOKS.keys(), key=len, reverse=True))
 # Group 3: chapter; Group 4: verse_start; Group 5: verse_end
 _VERSE_RE = re.compile(
     rf'(?<![A-Za-z\d])([123][-_ ]?)?({_BOOK_PATTERN})'
-    r'(?:[-_ ](\d{1,3})(?:V(\d{1,3})(?:-(\d{1,3}))?)?)?'
+    r'(?:[-_ ](\d{1,3})(?:[:V\-_ ](\d{1,3})(?:-(\d{1,3}))?)?)?'
     r'(?![A-Za-z])',
     re.IGNORECASE,
 )
@@ -136,7 +136,7 @@ def extract_verses_from_text(text: str, llm=None) -> list[str]:
         "Format each as 'Book Chapter:Verse' (e.g. 'Luke 9:23'). "
         "If no verses are found, reply with 'NONE'. "
         "Reply with one verse per line, nothing else.\n\n"
-        f"Slide text:\n{text[:1500]}"
+        f"Slide text:\n{text[:6000]}"
     )
     try:
         response = llm.invoke(prompt)

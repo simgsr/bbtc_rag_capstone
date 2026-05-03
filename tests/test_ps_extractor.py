@@ -89,3 +89,27 @@ def test_unnumbered_book_still_works():
     assert verses[0]["book"] == "Hebrews"
     assert verses[0]["chapter"] == 11
     assert verses[0]["verse_start"] == 1
+
+
+def test_colon_separator():
+    verses = parse_verses_from_filename("English_2024_JOHN-3:16-compressed.pdf")
+    assert len(verses) >= 1
+    assert verses[0]["book"] == "John"
+    assert verses[0]["chapter"] == 3
+    assert verses[0]["verse_start"] == 16
+
+
+def test_dash_separator_with_verse():
+    verses = parse_verses_from_filename("English_2024_EXODUS-12-1-10-compressed.pdf")
+    assert len(verses) >= 1
+    assert verses[0]["book"] == "Exodus"
+    assert verses[0]["chapter"] == 12
+    assert verses[0]["verse_start"] == 1
+    assert verses[0]["verse_end"] == 10
+
+
+def test_multiple_verses_in_filename():
+    verses = parse_verses_from_filename("English_2024_JOHN-3:16-ROMANS-8:28-compressed.pdf")
+    assert len(verses) == 2
+    assert verses[0]["verse_ref"] == "John 3:16"
+    assert verses[1]["verse_ref"] == "Romans 8:28"

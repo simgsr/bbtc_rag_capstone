@@ -330,7 +330,7 @@ _GARBAGE_PATTERNS = [
     r'Malachi|Matthew|Mark|Luke|John|Acts|Romans|Corinthians|Galatians|'
     r'Ephesians|Philippians|Colossians|Thessalonians|Timothy|Titus|Philemon|'
     r'Hebrews|James|Peter|Jude|Revelation)$',
-    r'\b(Name|Memberguide|Members Copy|Dps|Dsp)\b',
+    r'^\b(Date|Topic|Theme|Introduction|By|Page|Verse|Name|Memberguide|Members Copy|Dps|Dsp)\b',
 ]
 
 _TITLE_RE = re.compile(

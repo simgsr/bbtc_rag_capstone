@@ -1,11 +1,11 @@
 from langchain_ollama import ChatOllama
+import os
 
-GROQ_MODEL = "openai/gpt-oss-20b"  # Update this to the latest model if needed
+GROQ_MODEL = "openai/gpt-oss-20b"
 
 
 def get_llm(provider="ollama", temperature=0, ollama_model="gemma4:latest"):
     if provider == "groq":
-        import os
         from langchain_groq import ChatGroq
         api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
