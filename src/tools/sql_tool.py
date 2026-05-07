@@ -27,6 +27,25 @@ def make_sql_tool(db_path: str):
                 columns = [d[0] for d in cursor.description]
                 rows = cursor.fetchmany(50)
                 if not rows:
+                    # Fallback logic for speaker suggestions
+                    import re
+                    match = re.search(r"speaker\s*(?:LIKE|=)\s*['\"]%?([^'\"]+?)%?['\"]", query, re.IGNORECASE)
+                    if match:
+                        name = match.group(1)
+                        # Try to find similar speakers
+                        try:
+                            alt_cursor = conn.execute(
+                                "SELECT DISTINCT speaker FROM sermons WHERE speaker LIKE ? LIMIT 5",
+                                (f"%{name}%",)
+                            )
+                            suggestions = [r[0] for r in alt_cursor.fetchall() if r[0]]
+                            if suggestions:
+                                return (
+                                    f"No results found for '{name}'. "
+                                    f"Did you mean one of these speakers: {', '.join(suggestions)}?"
+                                )
+                        except:
+                            pass
                     return "No results found."
                 result = "Columns: " + ", ".join(columns) + "\n"
                 for row in rows:

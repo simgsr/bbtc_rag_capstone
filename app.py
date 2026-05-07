@@ -103,6 +103,13 @@ try:
         "  SELECT v.verse_ref, COUNT(*) n FROM verses v "
         "JOIN sermons s USING(sermon_id) WHERE s.speaker LIKE '%Name%' "
         "GROUP BY v.verse_ref ORDER BY n DESC LIMIT 5\n\n"
+
+        "## Speaker Naming Guidelines\n"
+        "- Speakers are stored with canonical titles: 'Ps [Name]', 'SP [Name]', 'Elder [Name]'.\n"
+        "- Examples: 'Ps Jeffrey Aw', 'SP Chua Seng Lee', 'Elder Lok Vi Ming'.\n"
+        "- The 'speaker' column is case-insensitive (COLLATE NOCASE), but try to use the correct casing for better quality.\n"
+        "- If a speaker query returns no results, check the suggestions provided by the tool.\n\n"
+
         "Themes by year:\n"
         "  SELECT year, COUNT(*) sermon_count, GROUP_CONCAT(DISTINCT theme) themes "
         "FROM sermons WHERE year>=2015 AND year IS NOT NULL GROUP BY year ORDER BY year\n\n"

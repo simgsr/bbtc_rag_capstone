@@ -5,7 +5,8 @@ GROQ_MODEL = "openai/gpt-oss-20b"
 GEMINI_MODEL = "gemini-2.5-pro"
 
 
-def get_llm(provider="ollama", temperature=0, ollama_model="gemma4:latest"):
+# def get_llm(provider="ollama", temperature=0, ollama_model="gemma4:latest"):
+def get_llm(provider="ollama", temperature=0, ollama_model="macdev/gpt-oss20b-large-ctx"):
     if provider == "groq":
         from langchain_groq import ChatGroq
         api_key = os.getenv("GROQ_API_KEY")
