@@ -225,7 +225,7 @@ def _build_meta_footer(tools_used: list, token_info: dict) -> str:
     )
 
 
-def respond(message, history, provider="ollama"):
+def respond(message, history, provider="ollama_local"):
     if not _init_ok or get_agent is None:
         return "⚠️ Agent not initialized. Check that Ollama is running.", [], {}
 
