@@ -18,8 +18,8 @@ from langgraph.prebuilt import create_react_agent
 
 load_dotenv()
 
-# Ensure Plotly uses dark template for consistency
-pio.templates.default = "plotly_dark"
+# Ensure Plotly uses light template for consistency
+pio.templates.default = "plotly_white"
 
 def _ensure_ollama(timeout: int = 20) -> bool:
     def _is_up() -> bool:
