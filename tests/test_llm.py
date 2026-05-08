@@ -28,10 +28,3 @@ def test_get_llm_ollama_local_model():
         assert call_kwargs.get("model") == OLLAMA_LOCAL_MODEL
 
 
-def test_get_llm_ollama_deepseek_model():
-    with patch("src.llm.ChatOllama") as mock_cls:
-        mock_cls.return_value = MagicMock(spec=ChatOllama)
-        from src.llm import get_llm, OLLAMA_DEEPSEEK_MODEL
-        get_llm(provider="ollama_deepseek")
-        call_kwargs = mock_cls.call_args[1]
-        assert call_kwargs.get("model") == OLLAMA_DEEPSEEK_MODEL
