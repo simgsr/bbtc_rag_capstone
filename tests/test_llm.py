@@ -6,7 +6,7 @@ def test_get_llm_returns_chat_ollama():
     with patch("src.llm.ChatOllama") as mock_cls:
         mock_cls.return_value = MagicMock(spec=ChatOllama)
         from src.llm import get_llm
-        result = get_llm()
+        get_llm()
         mock_cls.assert_called_once()
 
 
@@ -19,10 +19,19 @@ def test_get_llm_passes_temperature():
         assert call_kwargs.get("temperature") == 0.5
 
 
-def test_get_llm_uses_custom_model():
+def test_get_llm_ollama_local_model():
     with patch("src.llm.ChatOllama") as mock_cls:
         mock_cls.return_value = MagicMock(spec=ChatOllama)
-        from src.llm import get_llm
-        get_llm(ollama_model="llama3.2:3b")
+        from src.llm import get_llm, OLLAMA_LOCAL_MODEL
+        get_llm(provider="ollama_local")
         call_kwargs = mock_cls.call_args[1]
-        assert call_kwargs.get("model") == "llama3.2:3b"
+        assert call_kwargs.get("model") == OLLAMA_LOCAL_MODEL
+
+
+def test_get_llm_ollama_deepseek_model():
+    with patch("src.llm.ChatOllama") as mock_cls:
+        mock_cls.return_value = MagicMock(spec=ChatOllama)
+        from src.llm import get_llm, OLLAMA_DEEPSEEK_MODEL
+        get_llm(provider="ollama_deepseek")
+        call_kwargs = mock_cls.call_args[1]
+        assert call_kwargs.get("model") == OLLAMA_DEEPSEEK_MODEL
