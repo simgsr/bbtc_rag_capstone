@@ -106,45 +106,43 @@ class BBTCScraper:
 
         return self._clean_text(text), quality
 
-    def _process_link(self, url: str, year: int, lang: str):
+    def _process_link(self, url: str, year: int, lang: str) -> str | None:
+        """Download and extract one file. Returns the staging filename, or None if skipped."""
         basename = os.path.basename(url.split('?')[0])
         basename = urllib.parse.unquote(basename)
         filename = f"{lang}_{year}_{basename}"
-        
-        staging_path = os.path.join(self._staging_dir, filename)
-        if os.path.exists(staging_path):
-            print(f"⏭️  Already in staging: {filename}")
-            return
 
         # Skip handout files before downloading
         if classify_file(filename) == "handout":
             print(f"⏭️  Skipping handout: {filename}")
-            return
+            return None
 
         staging_path = os.path.join(self._staging_dir, filename)
+        if os.path.exists(staging_path):
+            print(f"⏭️  Already in staging: {filename}")
+            return filename
 
-        # Download if not exists in staging
-        if not os.path.exists(staging_path):
-            try:
-                self._download_file(url, staging_path)
-                print(f"📥 Downloaded [{lang}/{year}]: {filename}")
-            except Exception as e:
-                print(f"⚠️  Failed to download {url}: {e}")
-                return
+        try:
+            self._download_file(url, staging_path)
+            print(f"📥 Downloaded [{lang}/{year}]: {filename}")
+        except Exception as e:
+            print(f"⚠️  Failed to download {url}: {e}")
+            return None
 
         # Extract text
         print(f"🔍 Extracting [{lang}/{year}]: {filename}")
         extracted_text, quality = self._extract_text_from_file(staging_path)
-        
+
         if quality == "failed":
             print(f"⚠️  Extraction failed for {filename}")
         else:
-            # Save extracted text to a file in download_dir
             text_filename = os.path.splitext(filename)[0] + ".txt"
             text_path = os.path.join(self._download_dir, text_filename)
             with open(text_path, "w", encoding="utf-8") as f:
                 f.write(extracted_text)
             print(f"📝 Saved text: {text_filename}")
+
+        return filename
 
     def scrape_year(self, year: int, lang: str = "English"):
         url = self._archive_url(year, lang)
@@ -177,15 +175,28 @@ class BBTCScraper:
             
             print(f"🔎 Found {len(sermon_links)} sermon pages and {len(direct_files)} direct files for {lang} {year}")
             
-            # Process direct files first
+            # Process direct files first (no sermon-page manifest for these)
             for file_url in direct_files:
                 self._process_link(file_url, year=year, lang=lang)
 
-            # Process sermon pages
+            # Process sermon pages — record which files came from each page
             for sermon_url in sermon_links:
+                slug = sermon_url.rstrip("/").split("/")[-1]
+                manifest_path = os.path.join(self._staging_dir, f"_manifest_{slug}.json")
+
                 file_links = self._extract_file_links_from_page(sermon_url)
+                page_files = []
                 for link in file_links:
-                    self._process_link(link, year=year, lang=lang)
+                    fname = self._process_link(link, year=year, lang=lang)
+                    if fname:
+                        page_files.append(fname)
+
+                if page_files and not os.path.exists(manifest_path):
+                    import json
+                    manifest = {"url": sermon_url, "year": year, "lang": lang, "files": page_files}
+                    with open(manifest_path, "w", encoding="utf-8") as mf:
+                        json.dump(manifest, mf, indent=2)
+                    print(f"📋 Manifest written: _manifest_{slug}.json ({len(page_files)} files)")
                     
         except Exception as e:
             print(f"❌ Could not scrape {url}: {e}")

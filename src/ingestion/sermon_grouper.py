@@ -1,5 +1,8 @@
 """Group BBTC sermon files into (ng, ps) sermon groups."""
 
+import glob
+import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from src.ingestion.file_classifier import classify_file
@@ -28,26 +31,54 @@ def _jaccard(a: set, b: set) -> float:
     return len(a & b) / len(a | b)
 
 
-def group_sermon_files(filenames: list[str]) -> list[SermonGroup]:
+def group_sermon_files(filenames: list[str], staging_dir: str | None = None) -> list[SermonGroup]:
     """
     Group filenames into SermonGroups.
-    Each NG becomes one group. PS files are paired to their NG by date proximity
-    (≤ 3 days) or high topic-word Jaccard (≥ 0.5). Unpaired PS each become a
-    standalone group with ng=None.
-    Handout files are ignored.
+
+    If staging_dir is given, manifest files (_manifest_*.json) written by the
+    scraper are read first — files listed in a manifest are paired exactly as
+    the website had them, with no filename heuristics needed.
+
+    Remaining files (no manifest, or legacy staging without manifests) are
+    paired by date proximity (≤ 3 days) or topic-word Jaccard (≥ 0.5).
+    Unpaired PS files become standalone groups (ng=None). Handouts are ignored.
     """
+    groups: list[SermonGroup] = []
+    manifested: set[str] = set()
+
+    # --- Phase 1: manifest-based pairing (exact, from scraper) ---
+    if staging_dir:
+        for path in sorted(glob.glob(os.path.join(staging_dir, "_manifest_*.json"))):
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except Exception:
+                continue
+
+            group = SermonGroup()
+            for fname in data.get("files", []):
+                kind = classify_file(fname)
+                if kind == "ng":
+                    group.ng = fname
+                elif kind == "ps":
+                    group.ps.append(fname)
+                manifested.add(fname)
+
+            if group.ng or group.ps:
+                groups.append(group)
+
+    # --- Phase 2: fuzzy pairing for files not covered by any manifest ---
+    remaining = [f for f in filenames if f not in manifested]
+
     ngs, pss = [], []
-    for f in filenames:
+    for f in remaining:
         kind = classify_file(f)
         if kind == "ng":
             ngs.append(f)
         elif kind == "ps":
             pss.append(f)
-        # handout: skip
 
-    groups: list[SermonGroup] = []
     used_ps: set[str] = set()
-
     for ng in ngs:
         group = SermonGroup(ng=ng)
         ng_date = extract_any_date(ng)

@@ -259,7 +259,7 @@ def run_pipeline(wipe: bool = False, year: int | None = None, incremental: bool 
 
     print(f"📁 Found {len(sermon_files)} NG/PS files in staging/")
 
-    groups = group_sermon_files(sermon_files)
+    groups = group_sermon_files(sermon_files, staging_dir=STAGING_DIR)
     print(f"📦 Formed {len(groups)} sermon groups")
 
     indexed = 0
