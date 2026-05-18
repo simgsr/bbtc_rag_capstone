@@ -41,6 +41,10 @@ _STOP = {
     'notes', 'updated', 'final', 'church', 'bbtc',
     # Title words — should not appear as topic content words
     'elder', 'pastor', 'rev', 'reverend', 'dr',
+    # PS filename noise tokens (file-format / day markers, not topic content)
+    'compressed', 'sat', 'sun',
+    # Month abbreviations — date metadata, not topic words
+    'jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
 }
 
 # Minor words kept lowercase in title (unless first word)
@@ -201,8 +205,19 @@ def parse_cell_guide_filename(filename: str) -> dict:
     }
 
 
+_MONTH_RE = (
+    r'(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may'
+    r'|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?'
+    r'|nov(?:ember)?|dec(?:ember)?)'
+)
+
+
 def extract_any_date(filename: str) -> str | None:
     """Return the first recognisable date from any BBTC filename, or None."""
+    # Capture prefix year before stripping — e.g. "English_2026_" → "2026"
+    prefix_m = re.match(r'^(?:English|Mandarin)_(\d{4})_', filename, re.IGNORECASE)
+    prefix_year = prefix_m.group(1) if prefix_m else None
+
     s = _strip(filename)
 
     # ISO date: YYYY-MM-DD
@@ -215,10 +230,26 @@ def extract_any_date(filename: str) -> str | None:
     if m:
         return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
 
-    # Named month (mid-string search, e.g. "9-June-2018")
+    # YYYY-Month-DD pattern (e.g. "2026-Jan-31", "2026-Mar-28-29")
+    m = re.search(r'\b(20\d{2})[-_]?' + _MONTH_RE + r'[a-z]*[-_]?(\d{1,2})\b', s, re.IGNORECASE)
+    if m:
+        month = _MONTHS[m.group(2).lower()[:3]]
+        return f"{m.group(1)}-{month:02d}-{int(m.group(3)):02d}"
+
+    # Named month with explicit year (e.g. "9-June-2018")
     result = _search_date_month_year(s)
     if result:
         return result
+
+    # Fallback: day-month without year — use year from English_YYYY_ prefix
+    if prefix_year:
+        m = re.search(
+            r'\b(\d{1,2})(?:[-_]\d{1,2})?[-_]?' + _MONTH_RE + r'[a-z]*(?![a-z])',
+            s, re.IGNORECASE,
+        )
+        if m:
+            month = _MONTHS[m.group(2).lower()[:3]]
+            return f"{prefix_year}-{month:02d}-{int(m.group(1)):02d}"
 
     return None
 
