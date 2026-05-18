@@ -20,7 +20,9 @@ Ollama must be running locally: `ollama serve`
 
 Required Ollama models:
 - `BGE-M3` — embeddings (primary; used by ChromaDB at runtime and during ingest)
-- `gemma4:latest` — LLM for chat agent, metadata extraction, and summary generation
+- LLM for chat and ingest — configurable via `.env` (see `.env.example` for device-capacity guidance):
+  - `OLLAMA_CHAT_MODEL` — used by the Gradio agent (default: `gemma4:latest`; high-spec: `qwen3.5:122b`)
+  - `OLLAMA_INGEST_MODEL` — used for metadata extraction and summarisation (default: `gemma4:latest`; low-spec: `gemma3:4b`)
 
 ## Running the Application
 
