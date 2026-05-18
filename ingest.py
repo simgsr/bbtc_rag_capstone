@@ -101,6 +101,9 @@ def process_group(group, registry: SermonRegistry, vector_store: SermonVectorSto
     # Extract NG metadata
     meta = extract_ng_metadata(ng_text, ng_file or "") if ng_text else {}
     date = meta.get("date")
+    # Use website publish date as fallback — more reliable than filename heuristics
+    if not date and group.page_date:
+        date = group.page_date
     speaker = meta.get("speaker")
     topic = meta.get("topic")
     theme = meta.get("theme")

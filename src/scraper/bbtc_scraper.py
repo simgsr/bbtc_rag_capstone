@@ -41,11 +41,13 @@ class BBTCScraper:
         suffix = _LANG_SUFFIX.get(lang, "audio-sermons")
         return f"https://www.bbtc.com.sg/{suffix}-{year}/"
 
-    def _extract_file_links_from_page(self, page_url: str) -> list[str]:
+    def _extract_file_links_from_page(self, page_url: str) -> tuple[list[str], str | None]:
+        """Return (file_links, ISO_date_or_None) for a sermon page."""
         try:
             response = self._scraper.get(page_url, headers=_HEADERS, timeout=15)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, "html.parser")
+
             links = []
             for tag in soup.find_all("a", href=True):
                 href = tag["href"]
@@ -54,10 +56,20 @@ class BBTCScraper:
                         base = page_url.rstrip("/")
                         href = f"{base}/{href.lstrip('/')}"
                     links.append(href)
-            return list(set(links))
+
+            # Extract publish date from Open Graph meta tag
+            page_date = None
+            meta = soup.find("meta", property="article:published_time")
+            if meta and meta.get("content"):
+                raw = meta["content"]  # e.g. "2025-12-28T13:04:16+08:00"
+                m = re.match(r"(\d{4}-\d{2}-\d{2})", raw)
+                if m:
+                    page_date = m.group(1)
+
+            return list(set(links)), page_date
         except Exception as e:
             print(f"⚠️  Failed to get links from {page_url}: {e}")
-            return []
+            return [], None
 
     def _download_file(self, url: str, dest_path: str):
         response = self._scraper.get(url, headers=_HEADERS, timeout=30, stream=True)
@@ -184,7 +196,7 @@ class BBTCScraper:
                 slug = sermon_url.rstrip("/").split("/")[-1]
                 manifest_path = os.path.join(self._staging_dir, f"_manifest_{slug}.json")
 
-                file_links = self._extract_file_links_from_page(sermon_url)
+                file_links, page_date = self._extract_file_links_from_page(sermon_url)
                 page_files = []
                 for link in file_links:
                     fname = self._process_link(link, year=year, lang=lang)
@@ -193,10 +205,16 @@ class BBTCScraper:
 
                 if page_files and not os.path.exists(manifest_path):
                     import json
-                    manifest = {"url": sermon_url, "year": year, "lang": lang, "files": page_files}
+                    manifest = {
+                        "url": sermon_url,
+                        "year": year,
+                        "lang": lang,
+                        "date": page_date,
+                        "files": page_files,
+                    }
                     with open(manifest_path, "w", encoding="utf-8") as mf:
                         json.dump(manifest, mf, indent=2)
-                    print(f"📋 Manifest written: _manifest_{slug}.json ({len(page_files)} files)")
+                    print(f"📋 Manifest written: _manifest_{slug}.json ({len(page_files)} files, date={page_date})")
                     
         except Exception as e:
             print(f"❌ Could not scrape {url}: {e}")

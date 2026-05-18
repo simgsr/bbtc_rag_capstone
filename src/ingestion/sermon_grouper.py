@@ -13,6 +13,7 @@ from src.ingestion.filename_parser import extract_any_date, extract_topic_words
 class SermonGroup:
     ng: str | None = None
     ps: list[str] = field(default_factory=list)
+    page_date: str | None = None  # ISO date from the website page (most authoritative)
 
 
 def _date_proximity(d1: str | None, d2: str | None, tolerance: int = 3) -> bool:
@@ -55,7 +56,7 @@ def group_sermon_files(filenames: list[str], staging_dir: str | None = None) -> 
             except Exception:
                 continue
 
-            group = SermonGroup()
+            group = SermonGroup(page_date=data.get("date"))
             for fname in data.get("files", []):
                 kind = classify_file(fname)
                 if kind == "ng":
