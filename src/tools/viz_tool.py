@@ -63,13 +63,14 @@ def make_viz_tool(registry):
     db_path = registry.db_path
 
     @tool
-    def viz_tool(chart_name: str) -> str:
+    def viz_tool(chart_name: str, top_n: int = 15) -> str:
         """Generates an interactive Plotly chart from live sermon data and returns the JSON file path.
         Supported chart_name values:
-        - 'sermons_per_speaker' — horizontal bar chart of sermon count per speaker (top 15)
+        - 'sermons_per_speaker' — horizontal bar chart of sermon count per speaker
         - 'sermons_per_year'    — bar chart of sermon count per year (2015–present)
-        - 'verses_per_book'     — horizontal bar chart of most-preached Bible books (top 15)
+        - 'verses_per_book'     — horizontal bar chart of most-preached Bible books
         - 'sermons_scatter'     — bubble chart of sermon count by speaker and year
+        top_n: number of results to show for ranked charts (sermons_per_speaker, verses_per_book). Default 15.
         Returns the file path to the saved Plotly JSON."""
 
         try:
@@ -79,7 +80,7 @@ def make_viz_tool(registry):
                     rows = conn.execute(
                         "SELECT speaker, COUNT(*) as n FROM sermons "
                         "WHERE speaker IS NOT NULL AND speaker != '' "
-                        "GROUP BY speaker ORDER BY n DESC LIMIT 15"
+                        f"GROUP BY speaker ORDER BY n DESC LIMIT {top_n}"
                     ).fetchall()
                     if not rows:
                         return "No sermon data found."
@@ -104,7 +105,7 @@ def make_viz_tool(registry):
                         ),
                         hovertemplate="<b>%{y}</b><br>%{x} sermons<extra></extra>",
                     ))
-                    layout = _base_layout("Top 15 Speakers by Sermon Count", left_margin=170)
+                    layout = _base_layout(f"Top {top_n} Speakers by Sermon Count", left_margin=170)
                     layout["yaxis"]["categoryorder"] = "total ascending"
                     layout["xaxis"]["title"] = "Number of Sermons"
                     layout["yaxis"]["title"] = ""
@@ -150,7 +151,7 @@ def make_viz_tool(registry):
                     rows = conn.execute(
                         "SELECT book, COUNT(*) as n FROM verses "
                         "WHERE book IS NOT NULL AND book != '' "
-                        "GROUP BY book ORDER BY n DESC LIMIT 15"
+                        f"GROUP BY book ORDER BY n DESC LIMIT {top_n}"
                     ).fetchall()
                     if not rows:
                         return "No verse data found. Run ingest.py first."
@@ -175,7 +176,7 @@ def make_viz_tool(registry):
                         ),
                         hovertemplate="<b>%{y}</b><br>%{x} references<extra></extra>",
                     ))
-                    layout = _base_layout("Top 15 Preached Bible Books", left_margin=110)
+                    layout = _base_layout(f"Top {top_n} Preached Bible Books", left_margin=110)
                     layout["yaxis"]["categoryorder"] = "total ascending"
                     layout["xaxis"]["title"] = "Times Referenced"
                     layout["yaxis"]["title"] = ""
