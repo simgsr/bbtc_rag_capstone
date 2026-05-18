@@ -1,5 +1,8 @@
 from langchain_ollama import ChatOllama
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 GROQ_MODEL = "openai/gpt-oss-20b"
 GEMINI_MODEL = "gemini-3-flash-preview"
