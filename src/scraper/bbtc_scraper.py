@@ -221,8 +221,17 @@ class BBTCScraper:
 
 if __name__ == "__main__":
     import sys
-    year = int(sys.argv[1]) if len(sys.argv) > 1 else datetime.now().year  
-    print(f"🚀 Starting scraper for year {year}...")
     scraper = BBTCScraper()
-    scraper.scrape_year(year)
-    print("✅ Done!")
+    if len(sys.argv) > 1 and sys.argv[1] == "--all":
+        start_year = 2015
+        end_year = datetime.now().year
+        print(f"🚀 Scraping all years {start_year}–{end_year}...")
+        for y in range(start_year, end_year + 1):
+            print(f"\n📅 Year {y}")
+            scraper.scrape_year(y)
+        print("\n✅ All years done!")
+    else:
+        year = int(sys.argv[1]) if len(sys.argv) > 1 else datetime.now().year
+        print(f"🚀 Starting scraper for year {year}...")
+        scraper.scrape_year(year)
+        print("✅ Done!")
