@@ -3,7 +3,7 @@
 > **Capstone Project — NTU MSCS 2026**
 > A production-grade Hybrid Agentic RAG pipeline over a decade of church sermon archives.
 
-📚 800 sermons &nbsp;·&nbsp; 👤 35 speakers &nbsp;·&nbsp; 📅 2015 – 2026 &nbsp;·&nbsp; 🌐 1 languages
+800+ sermons &nbsp;·&nbsp; 35 speakers &nbsp;·&nbsp; 2015 – 2026 &nbsp;·&nbsp; English + Mandarin
 
 A fully local, privacy-preserving AI system that ingests, indexes, and answers natural-language questions about the BBTC (Bethesda Bedok-Tampines Church) sermon archive from 2015 to present. Built end-to-end: from PDF scraping through LLM-powered metadata extraction, dual-layer storage, and a ReAct agent that intelligently routes queries between SQL, vector search, visualisation, and Bible lookup tools.
 
@@ -35,7 +35,7 @@ The LangGraph ReAct agent decides in real time which tool to invoke — SQL for 
 | **Agent framework** | LangGraph ReAct (`langgraph.prebuilt`) |
 | **Pipeline scheduler** | Dagster (weekly cron) |
 | **Chat UI** | Gradio |
-| **Scraper** | HTTPX + BeautifulSoup (Cloudflare-bypass) |
+| **Scraper** | cloudscraper + BeautifulSoup (Cloudflare-bypass) |
 
 ---
 
@@ -105,68 +105,124 @@ The pipeline pairs these by date proximity and topic overlap before ingestion.
 ### Prerequisites
 
 - Python 3.11+
-- [Ollama](https://ollama.ai) running locally
-- Make (comes pre-installed on macOS/Linux)
+- [Ollama](https://ollama.ai) running locally (`ollama serve`)
+- Make (pre-installed on macOS/Linux)
+
+Pull the required Ollama models before running setup:
 
 ```bash
 ollama pull bge-m3           # embeddings — 1.2 GB, multilingual
-ollama pull gemma4:latest    # LLM — metadata extraction, summarisation, chat
+ollama pull gemma4:latest    # LLM — metadata extraction, summarisation, chat (~9.6 GB)
 ```
 
-### Install and run (One-Click Setup)
+> **Hardware guide** — see `.env.example` for model recommendations based on available RAM (8 GB → 96 GB+).
 
-We have provided a `Makefile` to handle environment creation, dependency installation, scraping, and ingestion automatically.
+### One-click setup (fresh clone)
 
 ```bash
 git clone <repo-url>
 cd bbtc_rag_capstone
 
-# Full setup (installs deps, scrapes current year, ingests data)
-make setup
-
-# Launch the Gradio chat UI
-make run
+make setup   # installs deps + scrapes all years (2015–present) + ingests
+make run     # launches Gradio UI at http://localhost:7860
 ```
 
-Open [http://localhost:7860](http://localhost:7860).
+`make setup` runs three steps automatically:
+1. Creates a `.venv` and installs `requirements.txt`
+2. Scrapes **all sermon years 2015–present** from the BBTC website
+3. Wipes any existing data and rebuilds SQLite + ChromaDB from scratch
 
-*Note: Missing directories (like `data/staging`, `data/sermons.db`, or `data/chroma_db`) are created automatically during setup.*
+> Scraping all years takes roughly 10–20 minutes depending on your connection. Ingestion (with LLM summarisation) takes 2–5 hours for ~800 sermons.
 
-### Bible archive (optional)
+---
+
+## Makefile Reference
+
+| Command | What it does |
+|---|---|
+| `make setup` | Full setup: install + scrape all years + ingest |
+| `make install` | Create `.venv` and install dependencies only |
+| `make scrape` | Scrape current year (override with `YEAR=2024 make scrape`) |
+| `make scrape-all` | Scrape all years 2015–present (manual backfill) |
+| `make ingest` | Incremental ingest of any new files in `data/staging/` |
+| `make run` | Launch Gradio chat UI |
+| `make dagster` | Open Dagster web UI for the weekly scheduler |
+| `make test` | Run pytest suite |
+| `make clean` | Delete `.venv`, `data/chroma_db/`, `data/sermons.db`, `data/staging/` |
+
+### Full rebuild from scratch
+
+```bash
+make clean
+make setup
+```
+
+### Incremental update (add a new year)
+
+```bash
+YEAR=2025 make scrape   # download 2025 files into staging
+make ingest             # pick up only the new files
+```
+
+---
+
+## Bible Archive (optional)
 
 KJV, ASV, and YLT are downloaded automatically from Scrollmapper (public domain). NIV and ESV require EPUB files you supply yourself (copyrighted — not included in this repo).
 
+Place them at:
 ```
 data/bibles/NIV.epub
 data/bibles/ESV The Holy Bible.epub
 ```
 
+Then ingest:
 ```bash
 # All 5 translations (NIV/ESV skipped automatically if files are absent)
 python -m src.ingestion.bible.bible_ingest
 
 # Public-domain only
 python -m src.ingestion.bible.bible_ingest --versions KJV ASV YLT
+
+# Wipe and re-ingest bible_collection
+python -m src.ingestion.bible.bible_ingest --wipe
 ```
 
 ---
 
-## Data Pipeline
+## Environment Variables
 
-For more granular control, you can run individual `make` commands or direct python scripts:
+Copy `.env.example` to `.env` and edit as needed:
 
 ```bash
-# Set up virtual environment and install dependencies
-make install
+cp .env.example .env
+```
 
-# Scrape current year's sermons (or specify: YEAR=2024 make scrape)
-make scrape
+| Variable | Default | Description |
+|---|---|---|
+| `OLLAMA_CHAT_MODEL` | `gemma4:latest` | LLM for the Gradio agent |
+| `OLLAMA_INGEST_MODEL` | `gemma4:latest` | LLM for metadata extraction and summarisation |
+| `GROQ_API_KEY` | *(empty)* | Optional Groq cloud inference fallback |
+| `GOOGLE_API_KEY` | *(empty)* | Optional Gemini cloud inference fallback |
 
-# Full sermon ingest from scratch (wipe + rebuild)
-make ingest
+---
 
-# Dagster web UI — weekly Saturday scheduler
-make dagster
+## Weekly Scheduler (Dagster)
+
+```bash
+make dagster   # opens http://localhost:3000
+```
+
+The Dagster pipeline runs three assets on a weekly Saturday 22:00 schedule:
+
+1. **`sermon_scraping`** — scrapes current month's sermons
+2. **`sermon_ingestion`** — incremental ingest of new files
+3. **`bible_ingestion`** — checks for new EPUB files in `data/bibles/`
+
+To trigger a manual run or configure `all_years: true` for a full backfill, use the Dagster UI's **Launchpad** and set the asset config:
+
+```json
+{"ops": {"sermon_scraping": {"config": {"all_years": true}}}}
 ```
 
 ---
@@ -239,7 +295,8 @@ bible_versions(
 ## Tests
 
 ```bash
-python -m pytest tests/ -v
+make test
+# or: python -m pytest tests/ -v
 ```
 
 103 tests covering file classification, filename parsing, metadata extraction, verse normalization, sermon grouping, vector retrieval, UI helpers, and SQLite storage.
@@ -255,6 +312,7 @@ python -m pytest tests/ -v
 ├── dagster_pipeline.py           # Weekly Dagster schedule
 ├── requirements.txt
 ├── .env.example
+├── Makefile
 ├── src/
 │   ├── ingestion/
 │   │   ├── bible/
@@ -297,3 +355,4 @@ python -m pytest tests/ -v
 - **Fully local by default**: Ollama handles both embeddings and LLM inference. Groq/Gemini are optional cloud fallbacks configured via `.env`.
 - **NG labeled fields are reliable from 2022+**: Pre-2022 files fall back to `filename_parser.py` heuristics.
 - **CrossEncoder reranking**: Top-20 BGE-M3 candidates are reranked by a cross-encoder before returning to the agent, improving precision without sacrificing recall.
+- **Manifest-based pairing**: The scraper writes `_manifest_*.json` files that record which PDFs came from the same sermon page. The grouper reads these first for exact pairing, then falls back to fuzzy date/topic matching.

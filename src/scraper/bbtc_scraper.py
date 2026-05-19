@@ -1,5 +1,4 @@
 # src/scraper/bbtc_scraper.py
-from pandas.core.tools.datetimes import to_datetime
 import os
 import sys
 from pathlib import Path

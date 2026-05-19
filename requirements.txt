@@ -10,13 +10,10 @@ langchain
 langchain-chroma
 langchain-ollama
 langchain-groq
-langchain-community
 sentence-transformers
 ollama
-pandas
 python-dotenv
 gradio
-matplotlib
 langgraph
 ebooklib
 plotly
