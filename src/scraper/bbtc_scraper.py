@@ -156,18 +156,18 @@ class BBTCScraper:
 
         return filename
 
-    def scrape_year(self, year: int, lang: str = "English"):
+    def scrape_year(self, year: int, lang: str = "English", month_filter: int | None = None):
         url = self._archive_url(year, lang)
         try:
             response = self._scraper.get(url, headers=_HEADERS, timeout=15)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, "html.parser")
-            
+
             content = soup.find("div", class_="content")
             if not content:
                 print(f"⚠️  Could not find content section on {url}")
                 return
-                
+
             sermon_links = set()
             direct_files = set()
             for a in content.find_all("a", href=True):
@@ -175,18 +175,18 @@ class BBTCScraper:
                 if not href.startswith("http"):
                     base = url.rstrip("/")
                     href = f"{base}/{href.lstrip('/')}"
-                
+
                 if "addtoany" in href or href == url or href == url + "/":
                     continue
-                    
+
                 parsed_path = urllib.parse.urlparse(href).path.lower()
                 if any(parsed_path.endswith(ext) for ext in _RESOURCE_EXTENSIONS):
                     direct_files.add(href)
                 elif href.startswith("https://www.bbtc.com.sg/"):
                     sermon_links.add(href)
-            
+
             print(f"🔎 Found {len(sermon_links)} sermon pages and {len(direct_files)} direct files for {lang} {year}")
-            
+
             # Process direct files first (no sermon-page manifest for these)
             for file_url in direct_files:
                 self._process_link(file_url, year=year, lang=lang)
@@ -196,14 +196,27 @@ class BBTCScraper:
                 slug = sermon_url.rstrip("/").split("/")[-1]
                 manifest_path = os.path.join(self._staging_dir, f"_manifest_{slug}.json")
 
+                # Skip pages already processed
+                if os.path.exists(manifest_path):
+                    continue
+
                 file_links, page_date = self._extract_file_links_from_page(sermon_url)
+
+                # Month filter: skip pages whose publish date is outside the target month.
+                # If page_date is unavailable, process anyway to avoid silent data loss.
+                if month_filter is not None and page_date:
+                    page_month = int(page_date[5:7])
+                    if page_month != month_filter:
+                        print(f"⏭️  Skipping (month {page_month:02d} ≠ {month_filter:02d}): {slug}")
+                        continue
+
                 page_files = []
                 for link in file_links:
                     fname = self._process_link(link, year=year, lang=lang)
                     if fname:
                         page_files.append(fname)
 
-                if page_files and not os.path.exists(manifest_path):
+                if page_files:
                     import json
                     manifest = {
                         "url": sermon_url,
@@ -215,7 +228,7 @@ class BBTCScraper:
                     with open(manifest_path, "w", encoding="utf-8") as mf:
                         json.dump(manifest, mf, indent=2)
                     print(f"📋 Manifest written: _manifest_{slug}.json ({len(page_files)} files, date={page_date})")
-                    
+
         except Exception as e:
             print(f"❌ Could not scrape {url}: {e}")
 

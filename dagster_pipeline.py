@@ -18,23 +18,30 @@ from src.scraper.bbtc_scraper import BBTCScraper
 
 class ScraperConfig(Config):
     year: int | None = None
+    all_years: bool = False  # set True for initial backfill (2015–present)
 
 
 @asset
 def sermon_scraping(context: AssetExecutionContext, config: ScraperConfig):
     """Scrape the BBTC website for new sermons."""
     scraper = BBTCScraper()
-    
+    now = datetime.now()
+
     if config.year:
         years = [config.year]
+        month_filter = None
+    elif config.all_years:
+        years = range(2015, now.year + 1)
+        month_filter = None
     else:
-        current_year = datetime.now().year
-        years = range(2015, current_year + 1)
-        
+        # Default: current year, current month only (new sermons post weekly)
+        years = [now.year]
+        month_filter = now.month
+
     for year in years:
-        context.log.info(f"Starting scraper for year {year}...")
-        scraper.scrape_year(year)
-        
+        context.log.info(f"Scraping year {year} (month_filter={month_filter})...")
+        scraper.scrape_year(year, month_filter=month_filter)
+
     context.log.info("Scraping complete.")
     return MetadataValue.text("done")
 

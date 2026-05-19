@@ -243,13 +243,13 @@ def run_pipeline(wipe: bool = False, year: int | None = None, incremental: bool 
         print(f"⚠️ Staging directory not found. Creating {STAGING_DIR}...")
         os.makedirs(STAGING_DIR, exist_ok=True)
         print("💡 Hint: Run 'make scrape' to download sermon files before ingesting.")
-        sys.exit(0)
+        return
 
     all_files = os.listdir(STAGING_DIR)
     if not all_files:
         print(f"⚠️ Staging directory ({STAGING_DIR}) is empty.")
         print("💡 Hint: Run 'make scrape' to download sermon files before ingesting.")
-        sys.exit(0)
+        return
 
     if year:
         all_files = [f for f in all_files if f"_{year}_" in f]
@@ -258,7 +258,7 @@ def run_pipeline(wipe: bool = False, year: int | None = None, incremental: bool 
     if not sermon_files:
         print("⚠️ No valid NG/PS files found in staging.")
         print("💡 Hint: Run 'make scrape' to download sermon files before ingesting.")
-        sys.exit(0)
+        return
 
     print(f"📁 Found {len(sermon_files)} NG/PS files in staging/")
 
