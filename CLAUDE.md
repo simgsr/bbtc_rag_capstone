@@ -40,7 +40,7 @@ python ingest.py
 python ingest.py --year 2024
 
 # Dagster web UI (weekly scheduler)
-DAGSTER_HOME=$(mktemp -d) dagster dev -m dagster_pipeline
+DAGSTER_HOME=.dagster dagster dev -m dagster_pipeline
 
 # Scrape a single year from BBTC website
 python src/scraper/bbtc_scraper.py 2024

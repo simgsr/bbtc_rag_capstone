@@ -1,0 +1,4 @@
+code_servers:
+  # Default is 90s — too short for LLM-backed ingestion runs.
+  # Raised to 1800s (30 min) so the code server survives long scrape+ingest jobs.
+  heartbeat_timeout: 1800

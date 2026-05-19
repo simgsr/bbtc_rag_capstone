@@ -25,6 +25,8 @@ data/**
 models/
 .dagster_home/
 .tmp_dagster_home_*/
+.dagster/*
+!.dagster/dagster.yaml
 
 # --- Editor / tool config (local only) ---
 .claude/

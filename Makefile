@@ -1,4 +1,4 @@
-.PHONY: install scrape scrape-all ingest run setup test clean
+.PHONY: install scrape ingest run setup dagster test clean
 
 # Virtual environment settings
 VENV_DIR = .venv
@@ -31,11 +31,6 @@ scrape:
 	@echo "📥 Scraping sermons for year $(YEAR)..."
 	$(PYTHON) src/scraper/bbtc_scraper.py $(YEAR)
 
-# Scrape all years from 2015 to present (initial backfill)
-scrape-all:
-	@echo "📥 Scraping all sermon years (2015–present)..."
-	$(PYTHON) src/scraper/bbtc_scraper.py --all
-
 # Ingest sermons into SQLite and ChromaDB
 ingest:
 	@echo "🧠 Ingesting sermons..."
@@ -49,7 +44,7 @@ run:
 # Run Dagster for weekly scheduling
 dagster:
 	@echo "⏱️ Starting Dagster scheduler..."
-	DAGSTER_HOME=$$(mktemp -d) $(VENV_DIR)/bin/dagster dev -m dagster_pipeline
+	DAGSTER_HOME=.dagster $(VENV_DIR)/bin/dagster dev -m dagster_pipeline
 
 # Run tests
 test:

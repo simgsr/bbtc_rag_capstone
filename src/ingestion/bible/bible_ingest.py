@@ -227,6 +227,14 @@ def ingest_bible(
     if versions is None:
         versions = DEFAULT_VERSIONS
 
+    # Early exit: avoid loading BGE-M3 if every version is already indexed
+    if not wipe:
+        pending = [v for v in versions if not _is_indexed(db_path, v)]
+        if not pending:
+            logger("✅ All Bible versions already indexed — nothing to do.")
+            return
+        versions = pending
+
     store = SermonVectorStore(persist_dir=chroma_dir)
 
     if wipe:
@@ -238,13 +246,9 @@ def ingest_bible(
             logger("   Collection deleted.")
         except Exception:
             pass
-        # Re-init store so it recreates the collection
         store = SermonVectorStore(persist_dir=chroma_dir)
 
     for version_id in versions:
-        if not wipe and _is_indexed(db_path, version_id):
-            logger(f"  ⏭️  Skipping {version_id} (already indexed)")
-            continue
 
         logger(f"\n📖 Ingesting {version_id} ...")
 

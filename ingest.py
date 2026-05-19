@@ -222,10 +222,8 @@ def process_group(group, registry: SermonRegistry, vector_store: SermonVectorSto
 def run_pipeline(wipe: bool = False, year: int | None = None, incremental: bool = True, force: bool = False):
     print("🚀 BBTC Sermon Ingestion Pipeline")
 
+    # --- Cheap setup: SQLite only ---
     registry = SermonRegistry(db_path=DB_PATH)
-    vector_store = SermonVectorStore(persist_dir=CHROMA_DIR)
-    llm = get_llm(model=OLLAMA_INGEST_MODEL)
-    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
 
     if wipe:
         print("🗑️  Wiping SQLite and ChromaDB...")
@@ -236,9 +234,9 @@ def run_pipeline(wipe: bool = False, year: int | None = None, incremental: bool 
             client.delete_collection("sermon_collection")
         except Exception:
             pass
-        vector_store = SermonVectorStore(persist_dir=CHROMA_DIR)
         incremental = False
 
+    # --- Early-exit checks (before loading BGE-M3 / LLM) ---
     if not os.path.isdir(STAGING_DIR):
         print(f"⚠️ Staging directory not found. Creating {STAGING_DIR}...")
         os.makedirs(STAGING_DIR, exist_ok=True)
@@ -253,14 +251,26 @@ def run_pipeline(wipe: bool = False, year: int | None = None, incremental: bool 
 
     if year:
         all_files = [f for f in all_files if f"_{year}_" in f]
-    # Only NG and PS
     sermon_files = [f for f in all_files if classify_file(f) in ("ng", "ps")]
     if not sermon_files:
         print("⚠️ No valid NG/PS files found in staging.")
         print("💡 Hint: Run 'make scrape' to download sermon files before ingesting.")
         return
 
+    # In incremental mode, skip all expensive setup if nothing is new
+    if incremental and not force:
+        ng_files = [f for f in sermon_files if classify_file(f) == "ng"]
+        new_ngs = [f for f in ng_files if not registry.ng_file_indexed(f)]
+        if not new_ngs:
+            print("✅ Nothing new to ingest.")
+            return
+
     print(f"📁 Found {len(sermon_files)} NG/PS files in staging/")
+
+    # --- Expensive setup: embeddings + LLM (only reached when there is work to do) ---
+    vector_store = SermonVectorStore(persist_dir=CHROMA_DIR)
+    llm = get_llm(model=OLLAMA_INGEST_MODEL)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
 
     groups = group_sermon_files(sermon_files, staging_dir=STAGING_DIR)
     print(f"📦 Formed {len(groups)} sermon groups")

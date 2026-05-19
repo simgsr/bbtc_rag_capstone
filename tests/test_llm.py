@@ -22,9 +22,9 @@ def test_get_llm_passes_temperature():
 def test_get_llm_ollama_local_model():
     with patch("src.llm.ChatOllama") as mock_cls:
         mock_cls.return_value = MagicMock(spec=ChatOllama)
-        from src.llm import get_llm, OLLAMA_LOCAL_MODEL
+        from src.llm import get_llm, OLLAMA_INGEST_MODEL
         get_llm(provider="ollama_local")
         call_kwargs = mock_cls.call_args[1]
-        assert call_kwargs.get("model") == OLLAMA_LOCAL_MODEL
+        assert call_kwargs.get("model") == OLLAMA_INGEST_MODEL
 
 

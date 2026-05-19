@@ -122,17 +122,17 @@ ollama pull gemma4:latest    # LLM — metadata extraction, summarisation, chat 
 ```bash
 git clone <repo-url>
 cd bbtc_rag_capstone
-
 make setup   # installs deps + scrapes all years (2015–present) + ingests
 make run     # launches Gradio UI at http://localhost:7860
 ```
 
 `make setup` runs three steps automatically:
 1. Creates a `.venv` and installs `requirements.txt`
-2. Scrapes **all sermon years 2015–present** from the BBTC website
-3. Wipes any existing data and rebuilds SQLite + ChromaDB from scratch
+2. Copies `.env.example` → `.env` if no `.env` exists
+3. Scrapes **all sermon years 2015–present** from the BBTC website
+4. Wipes any existing data and rebuilds SQLite + ChromaDB from scratch
 
-> Scraping all years takes roughly 10–20 minutes depending on your connection. Ingestion (with LLM summarisation) takes 2–5 hours for ~800 sermons.
+> Scraping all years takes ~10–20 minutes. Ingestion with LLM summarisation takes 2–5 hours for ~800 sermons.
 
 ---
 
@@ -140,12 +140,11 @@ make run     # launches Gradio UI at http://localhost:7860
 
 | Command | What it does |
 |---|---|
-| `make setup` | Full setup: install + scrape all years + ingest |
+| `make setup` | Full setup: install deps + scrape all years + ingest |
 | `make install` | Create `.venv` and install dependencies only |
 | `make scrape` | Scrape current year (override with `YEAR=2024 make scrape`) |
-| `make scrape-all` | Scrape all years 2015–present (manual backfill) |
 | `make ingest` | Incremental ingest of any new files in `data/staging/` |
-| `make run` | Launch Gradio chat UI |
+| `make run` | Launch Gradio chat UI at http://localhost:7860 |
 | `make dagster` | Open Dagster web UI for the weekly scheduler |
 | `make test` | Run pytest suite |
 | `make clean` | Delete `.venv`, `data/chroma_db/`, `data/sermons.db`, `data/staging/` |
@@ -153,8 +152,7 @@ make run     # launches Gradio UI at http://localhost:7860
 ### Full rebuild from scratch
 
 ```bash
-make clean
-make setup
+make clean && make setup
 ```
 
 ### Incremental update (add a new year)
@@ -218,6 +216,8 @@ The Dagster pipeline runs three assets on a weekly Saturday 22:00 schedule:
 1. **`sermon_scraping`** — scrapes current month's sermons
 2. **`sermon_ingestion`** — incremental ingest of new files
 3. **`bible_ingestion`** — checks for new EPUB files in `data/bibles/`
+
+Dagster state is stored in `.dagster/` (committed config, gitignored runtime data). The heartbeat timeout is set to 30 minutes in `.dagster/dagster.yaml` so long-running LLM ingestion jobs don't cause the code server to shut down prematurely.
 
 To trigger a manual run or configure `all_years: true` for a full backfill, use the Dagster UI's **Launchpad** and set the asset config:
 
