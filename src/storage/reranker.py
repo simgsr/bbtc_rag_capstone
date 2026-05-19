@@ -1,3 +1,5 @@
+import os
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 from sentence_transformers import CrossEncoder
 
 _MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"

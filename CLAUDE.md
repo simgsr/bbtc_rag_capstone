@@ -19,10 +19,14 @@ cp .env.example .env  # optional: GROQ_API_KEY, GEMINI_API_KEY for cloud fallbac
 Ollama must be running locally: `ollama serve`
 
 Required Ollama models:
-- `BGE-M3` — embeddings (primary; used by ChromaDB at runtime and during ingest)
-- LLM for chat and ingest — configurable via `.env` (see `.env.example` for device-capacity guidance):
-  - `OLLAMA_CHAT_MODEL` — used by the Gradio agent (default: `gemma4:latest` 9.6 GB; high-spec 96 GB+ RAM: `qwen3.5:122b` 81 GB; 32 GB RAM: `gemma4:31b` 19 GB)
-  - `OLLAMA_INGEST_MODEL` — used for metadata extraction and summarisation (default: `gemma4:latest`; low-spec: `gemma3:4b`)
+- `BGE-M3` — embeddings (always required; used by ChromaDB at runtime and during ingest)
+- Chat LLM — configurable via `OLLAMA_CHAT_MODEL` in `.env`:
+  - default: `gemma4:latest` (9.6 GB); high-spec 96 GB+ RAM: `qwen3.5:122b`; 32 GB: `gemma4:31b`
+
+**Ingest LLM** — controlled by `INGEST_PROVIDER` in `.env`:
+- `ollama_local` (default): uses `OLLAMA_INGEST_MODEL` (default `gemma4:latest`; low-spec: `gemma3:4b`)
+- `mlx` (Apple Silicon only, faster): uses `MLX_INGEST_MODEL` (default `mlx-community/Qwen3-4B-4bit`); requires `pip install mlx-lm`; model auto-downloads from HuggingFace on first run
+- `groq` / `gemini`: cloud fallbacks — set `GROQ_API_KEY` or `GOOGLE_API_KEY`
 
 ## Running the Application
 
@@ -77,7 +81,7 @@ ingest.py
   ├── GROUP     (sermon_grouper.py)   → SermonGroup(ng, ps[])
   ├── EXTRACT   (ng_extractor.py)     → TOPIC/SPEAKER/THEME/DATE via regex
   │             (ps_extractor.py)     → verses from filename + LLM on text
-  ├── SUMMARIZE (gemma4:latest)        → unified NG+PS summary
+  ├── SUMMARIZE (MLX or Ollama LLM)   → unified NG+PS summary
   └── EMBED     (chroma_store.py)     → BGE-M3 → sermon_collection
     ↓
 SQLite (data/sermons.db)  ← structured metadata + verses table
@@ -103,6 +107,7 @@ Gradio UI
 | `ingest_bible` | `src/ingestion/bible/bible_ingest.py` | Fetches Scrollmapper JSON + parses EPUBs → `bible_collection` |
 | `BibleEpubParser` | `src/ingestion/bible/epub_parser.py` | Extracts verse-by-verse text from NIV/ESV EPUB files |
 | `make_bible_tool` | `src/tools/bible_tool.py` | `get_bible_versions_tool` + `search_bible_tool` for the agent |
+| `MLXChatModel` / `get_ingest_llm` | `src/llm.py` | MLX-backed LangChain chat model; `get_ingest_llm()` reads `INGEST_PROVIDER` to select backend |
 | `run_pipeline` | `ingest.py` | Orchestrates full classify→group→extract→embed |
 | `dagster_pipeline.py` | root | Weekly Saturday schedule wrapping `ingest.py` |
 | `app.py` | root | Gradio UI + LangGraph ReAct agent |
@@ -173,3 +178,5 @@ bible_versions(
 - The scraper skips handouts before downloading (classify-before-download).
 - `create_react_agent` from `langgraph.prebuilt` is used — NOT `langchain.agents.create_agent`.
 - BGE-M3 embedding model: 1.2 GB, multilingual (handles English + Mandarin sermons).
+- MLX ingest: `MLXChatModel` wraps `mlx_lm.generate` as a LangChain `BaseChatModel`. Qwen3 thinking mode is disabled via `enable_thinking=False` in `apply_chat_template` (with `<think>` stripping as fallback) to avoid wasting tokens on reasoning during structured ingest tasks.
+- HuggingFace tokenizers warning is silenced via `TOKENIZERS_PARALLELISM=false` set in `reranker.py` before the `sentence_transformers` import.

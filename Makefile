@@ -51,11 +51,11 @@ test:
 	@echo "🧪 Running tests..."
 	$(PYTHON) -m pytest tests/ -v
 
-# Clean up environment and data
+# Clean up environment and data (preserves .gitkeep sentinels)
 clean:
 	@echo "🧹 Cleaning up data and environment..."
 	rm -rf $(VENV_DIR)
-	rm -rf data/chroma_db
-	rm -rf data/sermons.db
-	rm -rf data/staging
+	rm -rf data/chroma_db && mkdir -p data/chroma_db && touch data/chroma_db/.gitkeep
+	rm -f data/sermons.db
+	rm -rf data/staging && mkdir -p data/staging && touch data/staging/.gitkeep
 	@echo "✅ Cleanup complete."

@@ -27,9 +27,10 @@ The LangGraph ReAct agent decides in real time which tool to invoke — SQL for 
 
 | Layer | Technology |
 |---|---|
-| **LLM** | Gemma 4 (via Ollama, fully local) |
+| **Chat LLM** | Gemma 4 / Qwen 3 (via Ollama, fully local) |
+| **Ingest LLM** | Apple MLX (`Qwen3-4B-4bit`) or Ollama — configurable via `INGEST_PROVIDER` |
 | **Embeddings** | BGE-M3 (1.2 GB, multilingual, via Ollama) |
-| **Reranking** | CrossEncoder (`ms-marco-MiniLM-L-6-v2`) |
+| **Reranking** | CrossEncoder (`ms-marco-MiniLM-L-6-v2`, via sentence-transformers) |
 | **Vector store** | ChromaDB |
 | **Structured store** | SQLite |
 | **Agent framework** | LangGraph ReAct (`langgraph.prebuilt`) |
@@ -51,7 +52,7 @@ ingest.py
   ├── GROUP     (sermon_grouper.py)   → SermonGroup(ng, ps[])
   ├── EXTRACT   (ng_extractor.py)     → TOPIC/SPEAKER/THEME/DATE via regex
   │             (ps_extractor.py)     → key verse from PS filename
-  ├── SUMMARIZE (gemma4:latest)       → unified NG+PS summary
+  ├── SUMMARIZE (MLX or Ollama LLM)  → unified NG+PS summary
   └── EMBED     (chroma_store.py)     → BGE-M3 → sermon_collection
     ↓
 SQLite (data/sermons.db)              ← structured metadata + verses
@@ -111,11 +112,27 @@ The pipeline pairs these by date proximity and topic overlap before ingestion.
 Pull the required Ollama models before running setup:
 
 ```bash
-ollama pull bge-m3           # embeddings — 1.2 GB, multilingual
-ollama pull gemma4:latest    # LLM — metadata extraction, summarisation, chat (~9.6 GB)
+ollama pull bge-m3           # embeddings — 1.2 GB, multilingual (always required)
+ollama pull gemma4:latest    # chat LLM — ~9.6 GB (skip if using a smaller model)
 ```
 
 > **Hardware guide** — see `.env.example` for model recommendations based on available RAM (8 GB → 96 GB+).
+
+**Apple Silicon (M-series) — faster ingest via MLX**
+
+On Apple Silicon you can use [mlx-lm](https://github.com/ml-explore/mlx-lm) instead of Ollama for ingest LLM inference. MLX runs natively on the Neural Engine and is significantly faster for summarisation and verse extraction.
+
+```bash
+pip install mlx-lm
+```
+
+Then set in `.env`:
+```
+INGEST_PROVIDER=mlx
+MLX_INGEST_MODEL=mlx-community/Qwen3-4B-4bit   # downloaded automatically on first run
+```
+
+The MLX model (~2.5 GB) is downloaded from HuggingFace on first use and cached locally. Ollama is still required for BGE-M3 embeddings and the chat agent.
 
 ### One-click setup (fresh clone)
 
@@ -132,7 +149,7 @@ make run     # launches Gradio UI at http://localhost:7860
 3. Scrapes **all sermon years 2015–present** from the BBTC website
 4. Wipes any existing data and rebuilds SQLite + ChromaDB from scratch
 
-> Scraping all years takes ~10–20 minutes. Ingestion with LLM summarisation takes 2–5 hours for ~800 sermons.
+> Scraping all years takes ~10–20 minutes. Ingestion takes 2–5 hours with Ollama or ~30–60 minutes with MLX on Apple Silicon (~800 sermons).
 
 ---
 
@@ -199,9 +216,11 @@ cp .env.example .env
 | Variable | Default | Description |
 |---|---|---|
 | `OLLAMA_CHAT_MODEL` | `gemma4:latest` | LLM for the Gradio agent |
-| `OLLAMA_INGEST_MODEL` | `gemma4:latest` | LLM for metadata extraction and summarisation |
-| `GROQ_API_KEY` | *(empty)* | Optional Groq cloud inference fallback |
-| `GOOGLE_API_KEY` | *(empty)* | Optional Gemini cloud inference fallback |
+| `OLLAMA_INGEST_MODEL` | `gemma4:latest` | LLM for ingest when `INGEST_PROVIDER=ollama_local` |
+| `INGEST_PROVIDER` | `ollama_local` | Ingest LLM backend: `ollama_local` \| `mlx` \| `groq` \| `gemini` |
+| `MLX_INGEST_MODEL` | `mlx-community/Qwen3-4B-4bit` | MLX model for ingest (Apple Silicon only) |
+| `GROQ_API_KEY` | *(empty)* | Optional Groq cloud inference |
+| `GOOGLE_API_KEY` | *(empty)* | Optional Gemini cloud inference |
 
 ---
 
@@ -336,7 +355,7 @@ make test
 │   │   ├── sql_tool.py           # SQL query tool
 │   │   ├── vector_tool.py        # Sermon semantic search tool
 │   │   └── viz_tool.py           # Plotly chart tool
-│   ├── llm.py                    # Unified LLM client (Ollama / Groq / Gemini)
+│   ├── llm.py                    # Unified LLM client (MLX / Ollama / Groq / Gemini)
 │   └── ui_helpers.py             # Gradio rendering helpers
 ├── tests/                        # 103 unit tests
 ├── scripts/
@@ -352,7 +371,7 @@ make test
 
 - **Classify-before-download**: The scraper classifies filenames against a regex before downloading, so handout PDFs are never fetched.
 - **~50% image-based PDFs**: Many PS slide files have no extractable text — verse extraction relies entirely on filename regex parsing.
-- **Fully local by default**: Ollama handles both embeddings and LLM inference. Groq/Gemini are optional cloud fallbacks configured via `.env`.
+- **Fully local by default**: Ollama handles embeddings and chat LLM inference. For ingest, Apple Silicon users can switch to MLX (`INGEST_PROVIDER=mlx`) for significantly faster summarisation without any server overhead. Groq/Gemini are optional cloud fallbacks.
 - **NG labeled fields are reliable from 2022+**: Pre-2022 files fall back to `filename_parser.py` heuristics.
 - **CrossEncoder reranking**: Top-20 BGE-M3 candidates are reranked by a cross-encoder before returning to the agent, improving precision without sacrificing recall.
 - **Manifest-based pairing**: The scraper writes `_manifest_*.json` files that record which PDFs came from the same sermon page. The grouper reads these first for exact pairing, then falls back to fuzzy date/topic matching.

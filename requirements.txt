@@ -7,6 +7,7 @@ python-docx
 python-pptx
 chromadb
 langchain
+langchain-text-splitters
 langchain-chroma
 langchain-ollama
 langchain-groq
@@ -18,3 +19,4 @@ langgraph
 ebooklib
 plotly
 langchain-google-genai
+mlx-lm

@@ -21,7 +21,7 @@ from src.storage.sqlite_store import SermonRegistry
 from src.storage.chroma_store import SermonVectorStore
 from src.storage.normalize_speaker import normalize_speaker
 from src.storage.normalize_book import normalize_book
-from src.llm import get_llm, OLLAMA_INGEST_MODEL
+from src.llm import get_ingest_llm
 
 STAGING_DIR = "data/staging"
 CHROMA_DIR = "data/chroma_db"
@@ -270,7 +270,7 @@ def run_pipeline(wipe: bool = False, year: int | None = None, incremental: bool 
 
     # --- Expensive setup: embeddings + LLM (only reached when there is work to do) ---
     vector_store = SermonVectorStore(persist_dir=CHROMA_DIR)
-    llm = get_llm(model=OLLAMA_INGEST_MODEL)
+    llm = get_ingest_llm()
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
 
     groups = group_sermon_files(sermon_files, staging_dir=STAGING_DIR)
@@ -286,7 +286,7 @@ def run_pipeline(wipe: bool = False, year: int | None = None, incremental: bool 
             if incremental and not force and ng and registry.ng_file_indexed(ng):
                 skipped += 1
                 continue
-            label = ng or (group.ps_files[0] if group.ps_files else "unknown")
+            label = ng or (group.ps[0] if group.ps else "unknown")
             print(f"  ⏳ [{indexed + 1}/{total - skipped}] {label} ...", flush=True)
             process_group(group, registry, vector_store, llm, splitter, incremental, force)
             indexed += 1
