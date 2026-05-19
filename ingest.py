@@ -73,7 +73,7 @@ def _generate_summary(ng_body: str, topic: str | None, theme: str | None,
         response = llm.invoke(prompt)
         return (response.content if hasattr(response, "content") else str(response)).strip()
     except Exception as e:
-        print(f"  ⚠️  Summary generation failed: {e}")
+        print(f"  ⚠️  Summary generation failed: {e}", flush=True)
         return None
 
 
@@ -156,15 +156,16 @@ def process_group(group, registry: SermonRegistry, vector_store: SermonVectorSto
     verse_refs = [v["verse_ref"] for v in all_verses]
 
     # Generate unified summary
+    print(f"    🧠 Summarising ({topic or 'unknown topic'}) ...", flush=True)
     summary = _generate_summary(ng_body, topic, theme, speaker, verse_refs, ps_text_combined, llm)
 
     sermon_id = _make_sermon_id(date, topic, ng_file or (ps_files[0] if ps_files else "unknown"))
 
     if force:
-        print(f"  🔄 Force re-ingesting {sermon_id}...")
+        print(f"  🔄 Force re-ingesting {sermon_id}...", flush=True)
         registry.delete_verses(sermon_id)
 
-    print(f"  📖 {sermon_id} | {speaker} | {date} | {key_verse}")
+    print(f"  📖 {sermon_id} | {speaker} | {date} | {key_verse}", flush=True)
 
     # Store in SQLite
     registry.upsert_sermon({
@@ -278,16 +279,19 @@ def run_pipeline(wipe: bool = False, year: int | None = None, incremental: bool 
     indexed = 0
     skipped = 0
     failed = 0
+    total = len(groups)
     for group in groups:
         try:
             ng = group.ng
             if incremental and not force and ng and registry.ng_file_indexed(ng):
                 skipped += 1
                 continue
+            label = ng or (group.ps_files[0] if group.ps_files else "unknown")
+            print(f"  ⏳ [{indexed + 1}/{total - skipped}] {label} ...", flush=True)
             process_group(group, registry, vector_store, llm, splitter, incremental, force)
             indexed += 1
         except Exception as e:
-            print(f"  ❌ Error: {e}")
+            print(f"  ❌ Error: {e}", flush=True)
             failed += 1
 
     print(f"\n✅ Done: {indexed} indexed, {skipped} skipped, {failed} failed")
