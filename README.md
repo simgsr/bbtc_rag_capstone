@@ -1,6 +1,6 @@
 # BBTC Sermon Intelligence
 
-> **Capstone Project — NTU MSCS 2026**
+> **Capstone Project — NTU DSAI 2026**
 > A production-grade Hybrid Agentic RAG pipeline over a decade of church sermon archives.
 
 800+ sermons &nbsp;·&nbsp; 35 speakers &nbsp;·&nbsp; 2015 – 2026 &nbsp;·&nbsp; English + Mandarin
