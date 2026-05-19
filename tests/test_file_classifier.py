@@ -38,3 +38,9 @@ class TestClassifyFile:
 
     def test_visual_summary(self):
         assert classify_file("English_2018_Visual-Summary_EffectivePrayer-6.pdf") == "handout"
+
+    def test_manifest_json_excluded(self):
+        assert classify_file("_manifest_the-heart-of-discipleship.json") == "handout"
+
+    def test_manifest_json_with_numbers(self):
+        assert classify_file("_manifest_why-the-cross-2.json") == "handout"

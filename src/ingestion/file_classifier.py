@@ -20,8 +20,10 @@ def classify_file(filename: str) -> str:
     Returns:
         "ng"      — Notes / Cell Guide / Members Guide / Members Copy
         "ps"      — PPT deck, slides PDF, or primary sermon PDF
-        "handout" — Handout or visual summary (skip)
+        "handout" — Handout, visual summary, or scraper manifest (skip)
     """
+    if filename.startswith("_manifest_") and filename.endswith(".json"):
+        return "handout"
     if _NG_RE.search(filename):
         return "ng"
     if _HANDOUT_RE.search(filename):
