@@ -44,7 +44,7 @@ run:
 # Run Dagster for weekly scheduling
 dagster:
 	@echo "⏱️ Starting Dagster scheduler..."
-	DAGSTER_HOME=.dagster $(VENV_DIR)/bin/dagster dev -m dagster_pipeline
+	DAGSTER_HOME=$(PWD)/.dagster $(VENV_DIR)/bin/dagster dev -m dagster_pipeline
 
 # Run tests
 test:
