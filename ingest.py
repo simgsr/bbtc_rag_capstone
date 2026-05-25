@@ -15,7 +15,8 @@ from src.ingestion.file_classifier import classify_file
 from src.ingestion.sermon_grouper import group_sermon_files
 from src.ingestion.ng_extractor import extract_ng_metadata, extract_ng_body
 from src.ingestion.ps_extractor import (
-    parse_verses_from_filename, extract_ps_text, extract_verses_from_text
+    parse_verses_from_filename, parse_verses_from_text,
+    extract_ps_text, extract_verses_from_text
 )
 from src.storage.sqlite_store import SermonRegistry
 from src.storage.chroma_store import SermonVectorStore
@@ -119,6 +120,18 @@ def process_group(group, registry: SermonRegistry, vector_store: SermonVectorSto
         all_verses.extend(verses)
         ps_path = os.path.join(STAGING_DIR, pf)
         ps_text_combined += extract_ps_text(ps_path) + "\n"
+
+    # Extract verse refs from NG topic and body text (deterministic, no LLM cost).
+    # This is the primary source for sermons whose PS file is image-only or missing.
+    existing_refs = {v["verse_ref"].lower().replace(" ", "") for v in all_verses}
+    for src in [topic, ng_body]:
+        if not src:
+            continue
+        for v in parse_verses_from_text(src):
+            norm = v["verse_ref"].lower().replace(" ", "")
+            if norm not in existing_refs:
+                all_verses.append(v)
+                existing_refs.add(norm)
 
     # LLM verse extraction from PS text (always try if text is available)
     if ps_text_combined.strip() and llm:

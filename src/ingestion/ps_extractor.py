@@ -76,6 +76,40 @@ def normalize_verse_ref(book: str, chapter: int | None, verse_start: int | None,
     return f"{book} {chapter}:{verse_start}"
 
 
+def parse_verses_from_text(text: str) -> list[dict]:
+    """
+    Extract verse references from any inline text (e.g. NG topic or body).
+    Returns deduplicated list of verse dicts with is_key_verse=0.
+    """
+    seen: set[str] = set()
+    results = []
+    for m in _VERSE_RE.finditer(text):
+        prefix = m.group(1).rstrip('-_ ') if m.group(1) else ""
+        book_raw = m.group(2)
+        book_key = (prefix + book_raw).lower()
+        book = _BOOKS.get(book_key) or _BOOKS.get(book_raw.lower())
+        if not book:
+            continue
+        chapter = int(m.group(3)) if m.group(3) else None
+        verse_start = int(m.group(4)) if m.group(4) else None
+        verse_end = int(m.group(5)) if m.group(5) else None
+        if chapter and chapter > 150:
+            continue
+        ref = normalize_verse_ref(book, chapter, verse_start, verse_end)
+        if ref in seen:
+            continue
+        seen.add(ref)
+        results.append({
+            "verse_ref": ref,
+            "book": book,
+            "chapter": chapter,
+            "verse_start": verse_start,
+            "verse_end": verse_end,
+            "is_key_verse": 0,
+        })
+    return results
+
+
 def parse_verses_from_filename(filename: str) -> list[dict]:
     """
     Return list of verse dicts parsed from the filename.
