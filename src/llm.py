@@ -52,8 +52,11 @@ class MLXChatModel(BaseChatModel):
         print(f"🍎 Loading MLX model: {self.model_name} ...", flush=True)
         self._mlx_model, self._tokenizer = load(self.model_name)
 
+    MLX_TIMEOUT: int = 90  # seconds before declaring a hung generation
+
     def _generate(self, messages: List[BaseMessage], stop=None, run_manager=None, **kwargs) -> ChatResult:
         import re
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
         from mlx_lm import generate
         from mlx_lm.sample_utils import make_sampler
         if hasattr(self._tokenizer, "apply_chat_template"):
@@ -70,11 +73,22 @@ class MLXChatModel(BaseChatModel):
                 )
         else:
             prompt = "\n".join(m.content for m in messages)
-        response = generate(
-            self._mlx_model, self._tokenizer,
-            prompt=prompt, max_tokens=self.max_tokens,
-            sampler=make_sampler(temp=self.temperature), verbose=False,
-        )
+        sampler = make_sampler(temp=self.temperature)
+
+        def _run():
+            return generate(
+                self._mlx_model, self._tokenizer,
+                prompt=prompt, max_tokens=self.max_tokens,
+                sampler=sampler, verbose=False,
+            )
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_run)
+            try:
+                response = future.result(timeout=self.MLX_TIMEOUT)
+            except FuturesTimeout:
+                raise TimeoutError(f"MLX generate timed out after {self.MLX_TIMEOUT}s")
+
         # Strip residual <think>...</think> blocks (e.g. if model ignores enable_thinking)
         response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=response))])
