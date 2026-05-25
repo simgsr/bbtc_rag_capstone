@@ -261,8 +261,10 @@ def run_pipeline(wipe: bool = False, year: int | None = None, incremental: bool 
     # In incremental mode, skip all expensive setup if nothing is new
     if incremental and not force:
         ng_files = [f for f in sermon_files if classify_file(f) == "ng"]
+        ps_files = [f for f in sermon_files if classify_file(f) == "ps"]
         new_ngs = [f for f in ng_files if not registry.ng_file_indexed(f)]
-        if not new_ngs:
+        new_pss = [f for f in ps_files if not registry.ps_file_indexed(f)]
+        if not new_ngs and not new_pss:
             print("✅ Nothing new to ingest.")
             return
 
@@ -283,9 +285,14 @@ def run_pipeline(wipe: bool = False, year: int | None = None, incremental: bool 
     for group in groups:
         try:
             ng = group.ng
-            if incremental and not force and ng and registry.ng_file_indexed(ng):
-                skipped += 1
-                continue
+            ps0 = group.ps[0] if group.ps else None
+            if incremental and not force:
+                if ng and registry.ng_file_indexed(ng):
+                    skipped += 1
+                    continue
+                if not ng and ps0 and registry.ps_file_indexed(ps0):
+                    skipped += 1
+                    continue
             label = ng or (group.ps[0] if group.ps else "unknown")
             print(f"  ⏳ [{indexed + 1}/{total - skipped}] {label} ...", flush=True)
             process_group(group, registry, vector_store, llm, splitter, incremental, force)

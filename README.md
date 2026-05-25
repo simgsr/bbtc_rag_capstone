@@ -30,7 +30,6 @@ The LangGraph ReAct agent decides in real time which tool to invoke — SQL for 
 | **Chat LLM** | Gemma 4 / Qwen 3 (via Ollama, fully local) |
 | **Ingest LLM** | Apple MLX (`Qwen3-4B-4bit`) or Ollama — configurable via `INGEST_PROVIDER` |
 | **Embeddings** | BGE-M3 (1.2 GB, multilingual, via Ollama) |
-| **Reranking** | CrossEncoder (`ms-marco-MiniLM-L-6-v2`, via sentence-transformers) |
 | **Vector store** | ChromaDB |
 | **Structured store** | SQLite |
 | **Agent framework** | LangGraph ReAct (`langgraph.prebuilt`) |
@@ -86,7 +85,7 @@ The pipeline pairs these by date proximity and topic overlap before ingestion.
 | Component | File | Purpose |
 |---|---|---|
 | `SermonRegistry` | `src/storage/sqlite_store.py` | SQLite CRUD; sermons, verses, and reference tables |
-| `SermonVectorStore` | `src/storage/chroma_store.py` | ChromaDB with BGE-M3 embeddings + CrossEncoder reranker |
+| `SermonVectorStore` | `src/storage/chroma_store.py` | ChromaDB with lazy-initialized BGE-M3 embeddings |
 | `BBTCScraper` | `src/scraper/bbtc_scraper.py` | Cloudflare-bypass scraper; classify-before-download |
 | `classify_file` | `src/ingestion/file_classifier.py` | Returns `ng` \| `ps` \| `handout` |
 | `group_sermon_files` | `src/ingestion/sermon_grouper.py` | Pairs NG+PS files by date proximity and topic overlap |
@@ -345,10 +344,9 @@ make test
 │   ├── scraper/
 │   │   └── bbtc_scraper.py       # Cloudflare-bypass scraper
 │   ├── storage/
-│   │   ├── chroma_store.py       # ChromaDB + BGE-M3 + reranker
+│   │   ├── chroma_store.py       # ChromaDB + BGE-M3 (lazy-init)
 │   │   ├── normalize_book.py     # Canonical 66-book name normalization
 │   │   ├── normalize_speaker.py  # Speaker name normalization
-│   │   ├── reranker.py           # CrossEncoder reranking
 │   │   └── sqlite_store.py       # SQLite CRUD
 │   ├── tools/
 │   │   ├── bible_tool.py         # Bible verse + search tools
@@ -373,5 +371,4 @@ make test
 - **~50% image-based PDFs**: Many PS slide files have no extractable text — verse extraction relies entirely on filename regex parsing.
 - **Fully local by default**: Ollama handles embeddings and chat LLM inference. For ingest, Apple Silicon users can switch to MLX (`INGEST_PROVIDER=mlx`) for significantly faster summarisation without any server overhead. Groq/Gemini are optional cloud fallbacks.
 - **NG labeled fields are reliable from 2022+**: Pre-2022 files fall back to `filename_parser.py` heuristics.
-- **CrossEncoder reranking**: Top-20 BGE-M3 candidates are reranked by a cross-encoder before returning to the agent, improving precision without sacrificing recall.
 - **Manifest-based pairing**: The scraper writes `_manifest_*.json` files that record which PDFs came from the same sermon page. The grouper reads these first for exact pairing, then falls back to fuzzy date/topic matching.

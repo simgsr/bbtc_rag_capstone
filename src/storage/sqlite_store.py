@@ -142,6 +142,13 @@ class SermonRegistry:
                 (ng_file,)
             ).fetchone() is not None
 
+    def ps_file_indexed(self, ps_file: str) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            return conn.execute(
+                "SELECT 1 FROM sermons WHERE ps_file = ? AND status = 'indexed'",
+                (ps_file,)
+            ).fetchone() is not None
+
     def get_sermon(self, sermon_id: str) -> dict | None:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row

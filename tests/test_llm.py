@@ -3,7 +3,7 @@ from langchain_ollama import ChatOllama
 
 
 def test_get_llm_returns_chat_ollama():
-    with patch("src.llm.ChatOllama") as mock_cls:
+    with patch("langchain_ollama.ChatOllama") as mock_cls:
         mock_cls.return_value = MagicMock(spec=ChatOllama)
         from src.llm import get_llm
         get_llm()
@@ -11,7 +11,7 @@ def test_get_llm_returns_chat_ollama():
 
 
 def test_get_llm_passes_temperature():
-    with patch("src.llm.ChatOllama") as mock_cls:
+    with patch("langchain_ollama.ChatOllama") as mock_cls:
         mock_cls.return_value = MagicMock(spec=ChatOllama)
         from src.llm import get_llm
         get_llm(temperature=0.5)
@@ -20,11 +20,11 @@ def test_get_llm_passes_temperature():
 
 
 def test_get_llm_ollama_local_model():
-    with patch("src.llm.ChatOllama") as mock_cls:
+    with patch("langchain_ollama.ChatOllama") as mock_cls:
         mock_cls.return_value = MagicMock(spec=ChatOllama)
-        from src.llm import get_llm, OLLAMA_INGEST_MODEL
+        from src.llm import get_llm, OLLAMA_CHAT_MODEL
         get_llm(provider="ollama_local")
         call_kwargs = mock_cls.call_args[1]
-        assert call_kwargs.get("model") == OLLAMA_INGEST_MODEL
+        assert call_kwargs.get("model") == OLLAMA_CHAT_MODEL
 
 

@@ -3,7 +3,6 @@ import chromadb
 import os
 import subprocess
 import time
-from src.storage.reranker import Reranker
 
 def _ensure_ollama(timeout: int = 20) -> bool:
     try:
@@ -35,39 +34,40 @@ class SermonVectorStore:
         if embeddings is not None:
             self._embeddings = embeddings
         else:
-            _ensure_ollama()
-            try:
-                from langchain_ollama import OllamaEmbeddings
-                self._embeddings = OllamaEmbeddings(model="BGE-M3")
-                self._embeddings.embed_query("test")
-            except Exception as e:
-                # If model is missing, try to auto-pull it
-                print(f"🦙 Model BGE-M3 not found or ready. Attempting to pull it automatically... ({str(e)})")
-                try:
-                    subprocess.run(["ollama", "pull", "bge-m3"], check=True)
-                    self._embeddings.embed_query("test")
-                    print("🦙 BGE-M3 model successfully pulled and ready.")
-                except Exception as pull_err:
-                    raise RuntimeError(
-                        f"BGE-M3 embeddings unavailable. "
-                        f"Auto-pull failed ({str(pull_err)}). "
-                        "Start Ollama and run: ollama pull bge-m3"
-                    )
+            # Defer embedding init — only connect to BGE-M3 on first actual query
+            self._embeddings = None
         
         self._sermons = self._client.get_or_create_collection("sermon_collection")
         self._bible = self._client.get_or_create_collection("bible_collection")
-        self._reranker = Reranker()
+
+    def _ensure_embeddings(self):
+        if self._embeddings is not None:
+            return
+        _ensure_ollama()
+        try:
+            from langchain_ollama import OllamaEmbeddings
+            self._embeddings = OllamaEmbeddings(model="BGE-M3")
+            self._embeddings.embed_query("test")
+        except Exception as e:
+            print(f"🦙 BGE-M3 not ready, attempting pull... ({e})")
+            try:
+                subprocess.run(["ollama", "pull", "bge-m3"], check=True)
+                self._embeddings.embed_query("test")
+            except Exception as pull_err:
+                raise RuntimeError(
+                    f"BGE-M3 unavailable. Start Ollama and run: ollama pull bge-m3 ({pull_err})"
+                )
 
     def _embed(self, texts: list[str]) -> list[list[float]] | None:
         if self._embeddings:
-            # 8000 characters is a safe limit for BGE-M3
             safe_texts = [t[:8000] for t in texts]
             return self._embeddings.embed_documents(safe_texts)
-        return None # Let Chroma handle it
+        return None
 
     _MAX_BATCH = 100
 
     def _upsert_in_batches(self, collection, chunks: list[str], metadatas: list[dict], ids: list[str]):
+        self._ensure_embeddings()
         for start in range(0, len(chunks), self._MAX_BATCH):
             end = start + self._MAX_BATCH
             batch_chunks = chunks[start:end]
@@ -93,17 +93,14 @@ class SermonVectorStore:
         n = collection.count()
         if n == 0:
             return []
-        
+
+        self._ensure_embeddings()
         k_fetch = min(max(k * 3, 12), n)
         kwargs = {
             "n_results": k_fetch,
             "include": ["documents", "metadatas", "distances"],
+            "query_embeddings": [self._embeddings.embed_query(query)],
         }
-        
-        if self._embeddings:
-            kwargs["query_embeddings"] = [self._embeddings.embed_query(query)]
-        else:
-            kwargs["query_texts"] = [query]
             
         if where:
             kwargs["where"] = where
@@ -114,7 +111,7 @@ class SermonVectorStore:
                 results["documents"][0], results["metadatas"][0], results["distances"][0]
             )
         ]
-        return self._reranker.rerank(query, candidates, top_k=k)
+        return candidates[:k]
 
     def search_sermons(self, query: str, k: int = 4, where: dict | None = None) -> list[dict]:
         return self._search(self._sermons, query, k, where)

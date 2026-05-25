@@ -11,8 +11,27 @@ load_dotenv()
 GROQ_MODEL = "openai/gpt-oss-20b"
 GEMINI_MODEL = "gemini-3-flash-preview"
 
-OLLAMA_CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "gemma4:latest")
-OLLAMA_INGEST_MODEL = os.getenv("OLLAMA_INGEST_MODEL", "gemma4:latest")
+def _auto_detect_ollama_model(env_key: str) -> str:
+    val = os.getenv(env_key)
+    if val:
+        return val
+    try:
+        import urllib.request, json
+        with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=3) as r:
+            models = json.loads(r.read()).get("models", [])
+        if models:
+            name = models[0]["name"]
+            print(f"ℹ️  {env_key} not set — auto-selected: {name}")
+            return name
+    except Exception:
+        pass
+    raise RuntimeError(
+        f"{env_key} is not set in .env and no Ollama models were found. "
+        "Pull a model first: ollama pull <model>"
+    )
+
+OLLAMA_CHAT_MODEL = _auto_detect_ollama_model("OLLAMA_CHAT_MODEL")
+OLLAMA_INGEST_MODEL = _auto_detect_ollama_model("OLLAMA_INGEST_MODEL")
 MLX_INGEST_MODEL = os.getenv("MLX_INGEST_MODEL", "mlx-community/Qwen3-4B-4bit")
 INGEST_PROVIDER = os.getenv("INGEST_PROVIDER", "ollama_local")
 
@@ -93,4 +112,4 @@ def get_llm(provider="ollama_local", temperature=0, model=None):
         return MLXChatModel(model_name=model or MLX_INGEST_MODEL, temperature=float(temperature))
 
     from langchain_ollama import ChatOllama
-    return ChatOllama(model=model or OLLAMA_INGEST_MODEL, temperature=temperature, timeout=120)
+    return ChatOllama(model=model or OLLAMA_CHAT_MODEL, temperature=temperature, timeout=120)

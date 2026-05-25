@@ -3,7 +3,7 @@
 import re
 
 _NG_RE = re.compile(
-    r'(?:members?(?:27)?|leaders?|cell)[-_]?(?:guide|copy|guide[-_]updated)'
+    r'(?:members?(?:27s?)?|leaders?|cell)[-_]?(?:guide|copy|guide[-_]updated)'
     r'|MembersGuide|MessageSummary.*Members'
     r'|[-_]notes?[-_.]|[-_]notes?\.',
     re.IGNORECASE,
@@ -15,14 +15,19 @@ _HANDOUT_RE = re.compile(
 )
 
 
+_SERMON_EXTENSIONS = ('.pdf', '.pptx', '.ppt', '.docx', '.doc')
+
+
 def classify_file(filename: str) -> str:
     """
     Returns:
         "ng"      — Notes / Cell Guide / Members Guide / Members Copy
         "ps"      — PPT deck, slides PDF, or primary sermon PDF
-        "handout" — Handout, visual summary, or scraper manifest (skip)
+        "handout" — Handout, visual summary, manifest JSON, or non-sermon file (skip)
     """
     if filename.startswith("_manifest_") and filename.endswith(".json"):
+        return "handout"
+    if not any(filename.lower().endswith(ext) for ext in _SERMON_EXTENSIONS):
         return "handout"
     if _NG_RE.search(filename):
         return "ng"

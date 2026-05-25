@@ -9,6 +9,15 @@ class TestClassifyFile:
     def test_members27_guide(self):
         assert classify_file("English_2018_10-11-Nov-2018-Stewards-by-Ps-Hakan-members27-guide.pdf") == "ng"
 
+    def test_member27s_guide_url_encoded_apostrophe(self):
+        # "Member's" URL-encoded as "Member27s" — must classify as ng not ps
+        assert classify_file("English_2017_29-Jan-2017-Anointing-For-Good-Works-Elder-Edric-Sng-Member27s-Guide.pdf") == "ng"
+
+    def test_non_sermon_extension_excluded(self):
+        # .gitkeep, .txt etc. must not be classified as sermon files
+        assert classify_file(".gitkeep") == "handout"
+        assert classify_file("README.txt") == "handout"
+
     def test_leaders_guide(self):
         assert classify_file("English_2018_15-16-Dec-2018-And-the-Bleeding-Stopped-by-Elder-Chua-Seng-Lee-Leaders-Guide.pdf") == "ng"
 

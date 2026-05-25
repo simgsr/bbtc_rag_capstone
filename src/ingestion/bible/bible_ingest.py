@@ -194,13 +194,13 @@ def _is_indexed(db_path: str, version_id: str) -> bool:
                 "SELECT status FROM bible_versions WHERE version_id=?", (version_id,)
             )
             row = cursor.fetchone()
-            if row and row[0] == "indexed":
+            if row and row[0] in ("indexed", "skipped"):
                 return True
     except sqlite3.OperationalError:
         pass
     return False
 
-def _mark_indexed(db_path: str, version_id: str, source: str):
+def _mark_indexed(db_path: str, version_id: str, source: str, status: str = "indexed"):
     with sqlite3.connect(db_path) as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS bible_versions (
@@ -212,7 +212,7 @@ def _mark_indexed(db_path: str, version_id: str, source: str):
         """)
         conn.execute(
             "INSERT OR REPLACE INTO bible_versions VALUES (?,?,?,?)",
-            (version_id, source, "indexed", datetime.utcnow().isoformat()),
+            (version_id, source, status, datetime.utcnow().isoformat()),
         )
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
@@ -257,6 +257,11 @@ def ingest_bible(
             source = f"scrollmapper/{version_id}.json"
         elif version_id in LOCAL_EPUB_VERSIONS:
             filepath = LOCAL_EPUB_VERSIONS[version_id]
+            import os
+            if not os.path.exists(filepath):
+                logger(f"  ✗ EPUB not found for {version_id} ({filepath}) — marking skipped")
+                _mark_indexed(db_path, version_id, filepath, status="skipped")
+                continue
             verses = _parse_epub(version_id, filepath, logger)
             source = filepath
         else:

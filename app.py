@@ -1,3 +1,6 @@
+import warnings
+from langgraph.warnings import LangGraphDeprecatedSinceV10
+warnings.filterwarnings("ignore", category=LangGraphDeprecatedSinceV10)
 import gradio as gr
 import os
 import subprocess
@@ -44,7 +47,7 @@ def _ensure_ollama(timeout: int = 20) -> bool:
 
     print("⚠️  Ollama did not start within the timeout.")
     return False
-_ensure_ollama()
+_ollama_up = _ensure_ollama()
 
 try:
     registry = SermonRegistry()
@@ -208,7 +211,7 @@ _stats_bar_html = (
     else render_stats_bar(None)
 )
 
-_ollama_status = "online" if (vector_store and vector_store._embeddings is not None) else "offline"
+_ollama_status = "online" if _ollama_up else "offline"
 
 
 def _inference_badge_html(provider: str) -> str:
@@ -691,7 +694,7 @@ _QUICK_QUERY_FULL = [
     ["Sermons Specific: Summarize the key message and scripture shared in last week's sermon."],
 ]
 
-with gr.Blocks(title="BBTC Sermon Intelligence", theme=gr.themes.Default()) as demo:
+with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
     with gr.Row(elem_id="header"):
         with gr.Column(scale=4):
             gr.HTML("""
@@ -853,6 +856,7 @@ if __name__ == "__main__":
     demo.launch(
         server_name="0.0.0.0",
         server_port=port,
+        theme=gr.themes.Default(),
         css=custom_css,
         allowed_paths=["/tmp"]
     )
