@@ -19,14 +19,15 @@ cp .env.example .env  # optional: GROQ_API_KEY, GEMINI_API_KEY for cloud fallbac
 Ollama must be running locally: `ollama serve`
 
 Required Ollama models:
-- `BGE-M3` — embeddings (always required; used by ChromaDB at runtime and during ingest)
-- Chat LLM — configurable via `OLLAMA_CHAT_MODEL` in `.env`:
+- Chat LLM only — configurable via `OLLAMA_CHAT_MODEL` in `.env`:
   - default: `gemma4:latest` (9.6 GB); high-spec 96 GB+ RAM: `qwen3.5:122b`; 32 GB: `gemma4:31b`
 
 **Ingest LLM** — controlled by `INGEST_PROVIDER` in `.env`:
-- `ollama_local` (default): uses `OLLAMA_INGEST_MODEL` (default `gemma4:latest`; low-spec: `gemma3:4b`)
-- `mlx` (Apple Silicon only, faster): uses `MLX_INGEST_MODEL` (default `mlx-community/Qwen3-4B-4bit`); requires `pip install mlx-lm`; model auto-downloads from HuggingFace on first run
+- `mlx` (default, Apple Silicon): uses `MLX_INGEST_MODEL` (default `mlx-community/Qwen3-4B-4bit`); model auto-downloads from HuggingFace on first run
+- `ollama_local`: uses `OLLAMA_INGEST_MODEL` (default `gemma4:latest`); causes Ollama model-swap with BGE-M3 — slower
 - `groq` / `gemini`: cloud fallbacks — set `GROQ_API_KEY` or `GOOGLE_API_KEY`
+
+**Embeddings** — BGE-M3 via `sentence-transformers` on MPS (Apple Silicon GPU). No Ollama required for embeddings. Model auto-downloads from HuggingFace on first run.
 
 ## Running the Application
 
@@ -162,7 +163,7 @@ bible_versions(
 **`sermon_collection`**
 - Chunks: NG body text (800/150) + LLM summary (single chunk) per sermon
 - Metadata per chunk: `{sermon_id, doc_type, speaker, date, year, topic, theme, language, key_verse}`
-- Embeddings: `BGE-M3` via Ollama (fallback: nomic-embed-text)
+- Embeddings: `BGE-M3` via sentence-transformers on MPS
 
 **`bible_collection`**
 - ~102,790 chunks (5 translations × ~31,000 verses each)
@@ -179,7 +180,7 @@ bible_versions(
 - ~50% of PS files are image-based PDFs with no extractable text — verse extraction relies on filename regex.
 - The scraper skips handouts before downloading (classify-before-download).
 - `create_react_agent` from `langgraph.prebuilt` is used — NOT `langchain.agents.create_agent`.
-- BGE-M3 embedding model: 1.2 GB, multilingual (handles English + Mandarin sermons).
+- BGE-M3 embedding model: 1.2 GB, multilingual (handles English + Mandarin sermons). Runs via `sentence-transformers` on MPS — no Ollama required.
 - MLX ingest: `MLXChatModel` wraps `mlx_lm.generate` as a LangChain `BaseChatModel`. Qwen3 thinking mode is disabled via `enable_thinking=False` in `apply_chat_template` (with `<think>` stripping as fallback) to avoid wasting tokens on reasoning during structured ingest tasks.
 - `OLLAMA_CHAT_MODEL` and `OLLAMA_INGEST_MODEL` are auto-detected via `_auto_detect_ollama_model()` in `src/llm.py`: if not set in `.env`, it queries `localhost:11434/api/tags` and picks the first available model, raising `RuntimeError` if none are found.
 - BGE-M3 embedding init in `SermonVectorStore` is lazy — deferred to first `_upsert_in_batches` or `_search` call, so importing the class does not require Ollama to be running.
