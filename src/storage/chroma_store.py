@@ -46,12 +46,14 @@ class SermonVectorStore:
         _ensure_ollama()
         try:
             from langchain_ollama import OllamaEmbeddings
-            self._embeddings = OllamaEmbeddings(model="BGE-M3", timeout=60)
+            self._embeddings = OllamaEmbeddings(model="BGE-M3", client_kwargs={"timeout": 60})
             self._embeddings.embed_query("test")
         except Exception as e:
             print(f"🦙 BGE-M3 not ready, attempting pull... ({e})")
             try:
                 subprocess.run(["ollama", "pull", "bge-m3"], check=True)
+                from langchain_ollama import OllamaEmbeddings
+                self._embeddings = OllamaEmbeddings(model="BGE-M3", client_kwargs={"timeout": 60})
                 self._embeddings.embed_query("test")
             except Exception as pull_err:
                 raise RuntimeError(
