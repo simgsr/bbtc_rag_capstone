@@ -11,11 +11,11 @@ langchain-text-splitters
 langchain-chroma
 langchain-ollama
 langchain-groq
-ollama
+langchain-google-genai
 python-dotenv
 gradio
 langgraph
 ebooklib
 plotly
-langchain-google-genai
 mlx-lm
+sentence-transformers
