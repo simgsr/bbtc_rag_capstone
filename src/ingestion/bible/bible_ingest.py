@@ -71,11 +71,17 @@ _BOOK_NAME_MAP: dict[str, str] = {
 # These are remote sources (no equivalent "folder to scan"), so they stay
 # enumerated here. Listed scrollmapper IDs are always fetched on ingest.
 SCROLLMAPPER_VERSIONS: dict[str, str] = {
-    "KJV": "King James Version",
-    "ASV": "American Standard Version (1901)",
-    "YLT": "Young's Literal Translation",
-    "BBE": "Bible in Basic English",
+    "KJV":   "King James Version",
+    "ASV":   "American Standard Version (1901)",
+    "YLT":   "Young's Literal Translation",
+    "BBE":   "Bible in Basic English",
+    "ChiUn": "和合本 (Chinese Union Version, Traditional)",
 }
+
+# Scrollmapper's ChiUn JSON pads typography with literal spaces between
+# adjacent CJK ideographs. Strip them so "神 愛 世人" stores as "神愛世人".
+# Regex requires CJK on both sides → safe no-op for English/Latin text.
+_CJK_SPACING_RE = re.compile(r'(?<=[一-鿿])\s+(?=[一-鿿])')
 
 BIBLES_DIR = "data/bibles"
 
@@ -134,7 +140,7 @@ def _fetch_scrollmapper(version_id: str, logger=print) -> list[dict]:
             chapter = ch_obj.get("chapter", 0)
             for v_obj in ch_obj.get("verses", []):
                 verse = v_obj.get("verse", 0)
-                text  = v_obj.get("text", "").strip()
+                text  = _CJK_SPACING_RE.sub('', v_obj.get("text", "")).strip()
                 if text and canonical and chapter and verse:
                     verses.append(_make_verse(canonical, chapter, verse, text, version_id))
 
