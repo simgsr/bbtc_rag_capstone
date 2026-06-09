@@ -28,17 +28,18 @@ def sermon_scraping(context: AssetExecutionContext, config: ScraperConfig):
     now = datetime.now()
 
     if config.year:
-        years = [config.year]
-        month_filter = None
+        targets = [(config.year, None)]
     elif config.all_years:
-        years = range(2015, now.year + 1)
-        month_filter = None
+        targets = [(y, None) for y in range(2015, now.year + 1)]
     else:
-        # Default: current year, current month only (new sermons post weekly)
-        years = [now.year]
-        month_filter = now.month
+        # Default: current month + previous month so late-posted sermons
+        # from the prior month aren't missed on month rollover. If we're in
+        # January, the previous month is December of the prior year.
+        prev_year = now.year if now.month > 1 else now.year - 1
+        prev_month = now.month - 1 if now.month > 1 else 12
+        targets = [(prev_year, prev_month), (now.year, now.month)]
 
-    for year in years:
+    for year, month_filter in targets:
         context.log.info(f"Scraping year {year} (month_filter={month_filter})...")
         scraper.scrape_year(year, month_filter=month_filter)
 
@@ -75,7 +76,8 @@ ingestion_job = define_asset_job(
 
 sermon_weekly_schedule = ScheduleDefinition(
     job=ingestion_job,
-    cron_schedule="0 22 * * 6",  # Saturday 22:00
+    #cron_schedule="0 22 * * 6",  # Saturday 22:00
+    cron_schedule="53 1 * * 2",  # Tuesday 01:30
 )
 
 defs = Definitions(

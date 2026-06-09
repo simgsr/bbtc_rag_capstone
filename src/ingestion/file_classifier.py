@@ -5,7 +5,8 @@ import re
 _NG_RE = re.compile(
     r'(?:members?(?:27s?)?|leaders?|cell)[-_]?(?:guide|copy|guide[-_]updated)'
     r'|MembersGuide|MessageSummary.*Members'
-    r'|[-_]notes?[-_.]|[-_]notes?\.',
+    r'|[-_]notes?[-_.]|[-_]notes?\.'
+    r'|[-_]members?(?:27s?)?\.(?:pdf|docx?|pptx?)$',
     re.IGNORECASE,
 )
 

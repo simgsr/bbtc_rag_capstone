@@ -2,20 +2,32 @@
 Bible collection ingest pipeline.
 
 Sources:
-  - Scrollmapper (public domain): KJV, ASV, WEB, YLT, BBE — downloaded as JSON
-  - Local EPUBs (owned copies): NIV, ESV — parsed via epub_parser.py
+  - Scrollmapper (public domain): KJV, ASV, YLT, BBE — downloaded as JSON
+  - Local EPUBs: any *.epub in data/bibles/ — version_id is auto-derived from
+    the filename (first 2-5 letter all-caps token, e.g. "NIV.epub" → "NIV",
+    "ESV The Holy Bible.epub" → "ESV", "圣经 CUV.epub" → "CUV").
 
 Both sources produce the same verse dict format:
   {book, chapter, verse, text, version, reference}
 
+Behaviour:
+  - The data/bibles/ directory is the source of truth — drop an EPUB in,
+    re-run, and it gets ingested. Remove a file and it stays in the index
+    (data already there; explicit --wipe if you want to clean up).
+  - A version is re-ingested only if it isn't already in bible_versions
+    with status="indexed".
+
 Usage:
-  python -m src.ingestion.bible.bible_ingest            # ingest all configured versions
-  python -m src.ingestion.bible.bible_ingest --wipe     # wipe bible_collection first
-  python -m src.ingestion.bible.bible_ingest --versions KJV WEB NIV
+  python -m src.ingestion.bible.bible_ingest                    # ingest everything new
+  python -m src.ingestion.bible.bible_ingest --wipe             # wipe + full rebuild
+  python -m src.ingestion.bible.bible_ingest --versions KJV NIV # filter to specific IDs
 """
 
 import argparse
+import glob
 import json
+import os
+import re
 import sqlite3
 import sys
 import urllib.request
@@ -55,7 +67,9 @@ _BOOK_NAME_MAP: dict[str, str] = {
     "Psalm":              "Psalms",
 }
 
-# Translations available from scrollmapper (public domain)
+# Public-domain translations available from scrollmapper.
+# These are remote sources (no equivalent "folder to scan"), so they stay
+# enumerated here. Listed scrollmapper IDs are always fetched on ingest.
 SCROLLMAPPER_VERSIONS: dict[str, str] = {
     "KJV": "King James Version",
     "ASV": "American Standard Version (1901)",
@@ -63,27 +77,27 @@ SCROLLMAPPER_VERSIONS: dict[str, str] = {
     "BBE": "Bible in Basic English",
 }
 
-import glob
+BIBLES_DIR = "data/bibles"
 
-# Local EPUB files (owned, copyrighted)
-LOCAL_EPUB_VERSIONS: dict[str, str] = {
-    "NIV": "data/bibles/NIV.epub",
-    "ESV": "data/bibles/ESV The Holy Bible.epub",
-}
+# Match the first 2-5 letter all-caps token in a filename.
+# "NIV.epub" → NIV, "ESV The Holy Bible.epub" → ESV, "圣经 CUV.epub" → CUV.
+_VERSION_TOKEN_RE = re.compile(r'\b([A-Z]{2,5})\b')
 
-# Default set to ingest
-DEFAULT_VERSIONS = ["KJV", "ASV", "YLT", "NIV", "ESV"]
 
-# Auto-detect other EPUBs in data/bibles/
-for epub_file in glob.glob("data/bibles/*.epub"):
-    import os
-    filename = os.path.basename(epub_file)
-    version_id = os.path.splitext(filename)[0].upper()
-    # Don't override if already exists with a different path (like ESV)
-    if version_id not in LOCAL_EPUB_VERSIONS and "ESV" not in filename:
-        LOCAL_EPUB_VERSIONS[version_id] = epub_file
-        if version_id not in DEFAULT_VERSIONS:
-            DEFAULT_VERSIONS.append(version_id)
+def _version_id_from_filename(filename: str) -> str:
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    m = _VERSION_TOKEN_RE.search(stem.upper())
+    return m.group(1) if m else stem.upper()
+
+
+def discover_epubs(bibles_dir: str = BIBLES_DIR) -> list[tuple[str, str]]:
+    """Scan bibles_dir for *.epub files. Returns [(version_id, filepath), ...]."""
+    found: dict[str, str] = {}
+    for path in sorted(glob.glob(os.path.join(bibles_dir, "*.epub"))):
+        vid = _version_id_from_filename(path)
+        # If two files derive the same version_id, the first one wins (sorted order).
+        found.setdefault(vid, path)
+    return list(found.items())
 
 
 
@@ -190,17 +204,15 @@ def _upsert_verses(store: SermonVectorStore, verses: list[dict], logger=print):
 def _is_indexed(db_path: str, version_id: str) -> bool:
     try:
         with sqlite3.connect(db_path) as conn:
-            cursor = conn.execute(
-                "SELECT status FROM bible_versions WHERE version_id=?", (version_id,)
-            )
-            row = cursor.fetchone()
-            if row and row[0] in ("indexed", "skipped"):
-                return True
+            row = conn.execute(
+                "SELECT 1 FROM bible_versions WHERE version_id=? AND status='indexed'",
+                (version_id,),
+            ).fetchone()
+            return row is not None
     except sqlite3.OperationalError:
-        pass
-    return False
+        return False
 
-def _mark_indexed(db_path: str, version_id: str, source: str, status: str = "indexed"):
+def _mark_indexed(db_path: str, version_id: str, source: str):
     with sqlite3.connect(db_path) as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS bible_versions (
@@ -212,10 +224,24 @@ def _mark_indexed(db_path: str, version_id: str, source: str, status: str = "ind
         """)
         conn.execute(
             "INSERT OR REPLACE INTO bible_versions VALUES (?,?,?,?)",
-            (version_id, source, status, datetime.utcnow().isoformat()),
+            (version_id, source, "indexed", datetime.utcnow().isoformat()),
         )
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
+
+def _build_source_list(version_filter: list[str] | None) -> list[tuple[str, str, str | None]]:
+    """Returns [(source_type, version_id, filepath_or_None), ...]
+    source_type is 'scrollmapper' or 'epub'. Filter is applied case-insensitively."""
+    sources: list[tuple[str, str, str | None]] = []
+    for vid in SCROLLMAPPER_VERSIONS:
+        sources.append(("scrollmapper", vid, None))
+    for vid, path in discover_epubs():
+        sources.append(("epub", vid, path))
+    if version_filter:
+        wanted = {v.upper() for v in version_filter}
+        sources = [s for s in sources if s[1].upper() in wanted]
+    return sources
+
 
 def ingest_bible(
     versions: list[str] | None = None,
@@ -224,16 +250,16 @@ def ingest_bible(
     chroma_dir: str = "data/chroma_db",
     logger=print,
 ):
-    if versions is None:
-        versions = DEFAULT_VERSIONS
+    sources = _build_source_list(versions)
+    if not sources:
+        logger("⚠️  No bible sources found "
+               f"(no scrollmapper versions configured and no EPUBs in {BIBLES_DIR}/).")
+        return
 
-    # Early exit: avoid loading BGE-M3 if every version is already indexed
-    if not wipe:
-        pending = [v for v in versions if not _is_indexed(db_path, v)]
-        if not pending:
-            logger("✅ All Bible versions already indexed — nothing to do.")
-            return
-        versions = pending
+    pending = sources if wipe else [s for s in sources if not _is_indexed(db_path, s[1])]
+    if not pending:
+        logger("✅ All discovered Bible versions already indexed — nothing to do.")
+        return
 
     store = SermonVectorStore(persist_dir=chroma_dir)
 
@@ -248,28 +274,18 @@ def ingest_bible(
             pass
         store = SermonVectorStore(persist_dir=chroma_dir)
 
-    for version_id in versions:
+    for source_type, version_id, filepath in pending:
+        logger(f"\n📖 Ingesting {version_id} ({source_type}) ...")
 
-        logger(f"\n📖 Ingesting {version_id} ...")
-
-        if version_id in SCROLLMAPPER_VERSIONS:
+        if source_type == "scrollmapper":
             verses = _fetch_scrollmapper(version_id, logger)
             source = f"scrollmapper/{version_id}.json"
-        elif version_id in LOCAL_EPUB_VERSIONS:
-            filepath = LOCAL_EPUB_VERSIONS[version_id]
-            import os
-            if not os.path.exists(filepath):
-                logger(f"  ✗ EPUB not found for {version_id} ({filepath}) — marking skipped")
-                _mark_indexed(db_path, version_id, filepath, status="skipped")
-                continue
+        else:
             verses = _parse_epub(version_id, filepath, logger)
             source = filepath
-        else:
-            logger(f"  ✗ Unknown version '{version_id}' — skipping")
-            continue
 
         if not verses:
-            logger(f"  ✗ No verses extracted for {version_id} — skipping")
+            logger(f"  ✗ No verses extracted for {version_id} — skipping (will retry next run)")
             continue
 
         _upsert_verses(store, verses, logger)
@@ -287,10 +303,9 @@ if __name__ == "__main__":
         help="Wipe bible_collection before ingesting"
     )
     parser.add_argument(
-        "--versions", nargs="+",
-        default=DEFAULT_VERSIONS,
-        metavar="VERSION",
-        help=f"Versions to ingest (default: {' '.join(DEFAULT_VERSIONS)})",
+        "--versions", nargs="+", default=None, metavar="VERSION",
+        help="Optional filter: only ingest these version IDs "
+             "(default: all scrollmapper versions + every EPUB in data/bibles/)",
     )
     args = parser.parse_args()
     ingest_bible(versions=args.versions, wipe=args.wipe)
