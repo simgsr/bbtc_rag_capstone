@@ -24,7 +24,50 @@ load_dotenv()
 # Ensure Plotly uses light template for consistency
 pio.templates.default = "plotly_white"
 
+_ollama_proc = None  # only set if we spawn `ollama serve` ourselves
+
+
+def _shutdown_ollama() -> None:
+    """Terminate ollama serve if (and only if) this process started it."""
+    global _ollama_proc
+    if _ollama_proc is None or _ollama_proc.poll() is not None:
+        return
+    print("🦙 Shutting down ollama serve ...", flush=True)
+    _ollama_proc.terminate()
+    try:
+        _ollama_proc.wait(timeout=10)
+    except Exception:
+        _ollama_proc.kill()
+    _ollama_proc = None
+
+
+def _register_ollama_cleanup() -> None:
+    """Register atexit + signal handlers (no-op if we didn't spawn ollama). Must run on main thread."""
+    import atexit, signal
+    atexit.register(_shutdown_ollama)
+    sigs = [signal.SIGTERM, signal.SIGINT]
+    if hasattr(signal, "SIGHUP"):
+        sigs.append(signal.SIGHUP)
+    for sig in sigs:
+        try:
+            prev = signal.getsignal(sig)
+            def _handler(signum, frame, _prev=prev):
+                _shutdown_ollama()
+                if callable(_prev) and _prev not in (signal.SIG_DFL, signal.SIG_IGN):
+                    _prev(signum, frame)
+                else:
+                    raise SystemExit(0)
+            signal.signal(sig, _handler)
+        except (ValueError, OSError):
+            pass
+
+
+_register_ollama_cleanup()
+
+
 def _ensure_ollama(timeout: int = 20) -> bool:
+    global _ollama_proc
+
     def _is_up() -> bool:
         try:
             urllib.request.urlopen("http://127.0.0.1:11434", timeout=2)
@@ -33,10 +76,12 @@ def _ensure_ollama(timeout: int = 20) -> bool:
             return False
 
     if _is_up():
-        return True
+        return True  # already running externally — leave it alone
 
     print("🦙 Ollama not running — starting it now...")
-    subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _ollama_proc = subprocess.Popen(
+        ["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
 
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -183,19 +228,29 @@ try:
     )
 
     _agent_cache: dict = {}
+    _llm_cache: dict = {}  # strong refs to LLMs — prevents GC from closing their httpx clients
+
+    def _build_agent(provider: str):
+        _llm = get_chat_llm(provider=provider, temperature=0.1)
+        _llm_cache[provider] = _llm  # strong ref so httpx client isn't GC-closed
+        return create_react_agent(
+            _llm,
+            tools=[sql_tool, vector_tool, viz_tool, get_bible_versions_tool, search_bible_tool],
+            prompt=SystemMessage(content=SYSTEM_PROMPT),
+        )
 
     def get_agent(provider: str = "ollama_local"):
+        # MLX path uses mlx_lm.server's OpenAI-compat layer, which can leave the
+        # httpx client in a closed state after some streamed responses. Rebuild
+        # per call — the model stays loaded in mlx_lm.server so the cost is millis.
+        if provider == "mlx":
+            return _build_agent(provider)
         if provider not in _agent_cache:
-            _llm = get_chat_llm(provider=provider, temperature=0.1)
-            _agent_cache[provider] = create_react_agent(
-                _llm,
-                tools=[sql_tool, vector_tool, viz_tool, get_bible_versions_tool, search_bible_tool],
-                prompt=SystemMessage(content=SYSTEM_PROMPT),
-            )
+            _agent_cache[provider] = _build_agent(provider)
         return _agent_cache[provider]
 
-    # Pre-warm local Ollama agent at startup only
-    get_agent("ollama_local")
+    # Pre-warm MLX agent at startup (spawns mlx_lm.server + loads model)
+    get_agent("mlx")
     _init_ok = True
 
 except Exception as e:
@@ -309,7 +364,25 @@ def respond(message, history, provider="ollama_local"):
 
     try:
         t0 = time.time()
-        result = agent.invoke({"messages": messages})
+        # httpx raises "Cannot send a request, as the client has been closed."
+        # when the underlying client was closed externally (mlx_lm.server stream
+        # teardown, transient connection drop, etc.). Evict any cached state for
+        # this provider and rebuild — retry up to 3 times.
+        result = None
+        last_err = None
+        for attempt in range(3):
+            try:
+                result = agent.invoke({"messages": messages})
+                break
+            except Exception as inner:
+                last_err = inner
+                if "client has been closed" not in str(inner):
+                    raise
+                _agent_cache.pop(provider, None)
+                _llm_cache.pop(provider, None)
+                agent = get_agent(provider)
+        if result is None:
+            raise last_err
         elapsed = time.time() - t0
 
         final_msg = result["messages"][-1]
@@ -755,23 +828,23 @@ with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
                     </div>
                 </div>
             """)
-            inference_status = gr.HTML(_inference_badge_html("ollama_local"))
+            inference_status = gr.HTML(_inference_badge_html("mlx"))
 
             gr.Markdown("---")
             gr.Markdown("### Inference Engine")
             provider_radio = gr.Radio(
                 choices=[
-                    f"{OLLAMA_CHAT_MODEL} [local]",
                     f"{MLX_CHAT_MODEL.split('/')[-1]} [mlx]",
+                    f"{OLLAMA_CHAT_MODEL} [local]",
                     "Groq [cloud]",
                     "Gemini 3 Flash [cloud]",
                 ],
-                value=f"{OLLAMA_CHAT_MODEL} [local]",
+                value=f"{MLX_CHAT_MODEL.split('/')[-1]} [mlx]",
                 show_label=False,
                 interactive=True,
                 elem_id="model-radio",
             )
-            provider_state = gr.State("ollama_local")
+            provider_state = gr.State("mlx")
 
             gr.Markdown("---")
             gr.Markdown("### Capabilities")

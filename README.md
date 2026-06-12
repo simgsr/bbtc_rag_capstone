@@ -27,7 +27,7 @@ The LangGraph ReAct agent decides in real time which tool to invoke — SQL for 
 
 | Layer | Technology |
 |---|---|
-| **Chat LLM** | Picked at runtime via "Inference Engine" radio: Ollama (local) · MLX Qwen3-30B-A3B (local, via `mlx_lm.server` + OpenAI-compat API) · Groq · Gemini |
+| **Chat LLM** | Picked at runtime via "Inference Engine" radio: MLX Qwen3-30B-A3B (default, local, via `mlx_lm.server` + OpenAI-compat API) · Ollama (local) · Groq · Gemini |
 | **Ingest LLM** | Apple MLX (`Qwen3-4B-4bit`) on Neural Engine — default; Ollama / Groq / Gemini configurable |
 | **Embeddings** | BGE-M3 (1.2 GB, multilingual) via `sentence-transformers` on MPS (Apple Silicon GPU) |
 | **Vector store** | ChromaDB |
@@ -119,7 +119,7 @@ ollama pull gemma4:latest    # chat LLM — ~9.6 GB (see .env.example for smalle
 **Ingest, chat, and embeddings can all run fully on Apple Silicon without Ollama:**
 
 - **Ingest LLM** — [mlx-lm](https://github.com/ml-explore/mlx-lm) runs `Qwen3-4B-4bit` on the Neural Engine. The model (~2.5 GB) is downloaded from HuggingFace automatically on first run.
-- **Chat LLM (MLX option)** — when the "Inference Engine" radio is set to `Qwen3-30B-A3B-Instruct-2507-4bit [mlx]`, the app boots `mlx_lm.server` (OpenAI-compatible API) and connects via `ChatOpenAI` for full tool-calling. Model is ~17 GB MoE (3B active params); auto-downloads on first selection. Server is started lazily and shut down with the app via `atexit` + signal hooks.
+- **Chat LLM (MLX, default)** — `Qwen3-30B-A3B-Instruct-2507-4bit [mlx]` is the default in the "Inference Engine" radio. The app boots `mlx_lm.server` (OpenAI-compatible API) at startup and connects via `ChatOpenAI` for full tool-calling. Model is ~17 GB MoE (3B active params); auto-downloads on first selection. The server is shut down with the app via `atexit` + `SIGINT` / `SIGTERM` / `SIGHUP` handlers. If you also use Ollama and the app spawned `ollama serve` itself, it's tracked and cleaned up the same way (a pre-existing system Ollama daemon is left alone).
 - **Embeddings** — `sentence-transformers` runs BGE-M3 on MPS (Apple Silicon GPU). The model (~570 MB) is downloaded from HuggingFace automatically on first run.
 
 Both are installed via `requirements.txt` — no extra steps needed.

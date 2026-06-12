@@ -59,7 +59,10 @@ def _register_mlx_cleanup() -> None:
     """Register atexit + signal handlers (no-op if mlx_lm.server was never started). Must run on main thread."""
     import atexit, signal
     atexit.register(_shutdown_mlx_server)
-    for sig in (signal.SIGTERM, signal.SIGINT):
+    sigs = [signal.SIGTERM, signal.SIGINT]
+    if hasattr(signal, "SIGHUP"):  # not present on Windows
+        sigs.append(signal.SIGHUP)
+    for sig in sigs:
         try:
             prev = signal.getsignal(sig)
             def _handler(signum, frame, _prev=prev):
@@ -103,8 +106,8 @@ def _ensure_mlx_server(model: str, host: str = MLX_SERVER_HOST, port: int = MLX_
          "--model", model, "--host", host, "--port", str(port),
          "--prompt-cache-size", str(cache_slots),
          "--prompt-cache-bytes", str(cache_bytes),
-         "--log-level", "WARNING"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+         "--log-level", "INFO"],
+        stdout=None, stderr=None,  # route to parent terminal for debugging
     )
 
     deadline = time.time() + 180
@@ -226,6 +229,6 @@ def get_llm(provider="ollama_local", temperature=0, model=None):
     return ChatOllama(
         model=model or OLLAMA_CHAT_MODEL,
         temperature=temperature,
-        timeout=120,
+        timeout=600,
         num_ctx=num_ctx,
     )

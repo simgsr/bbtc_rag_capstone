@@ -24,8 +24,8 @@ Required Ollama models:
   - Ollama context window: `OLLAMA_NUM_CTX` (default `32768`) — Ollama's own default is 2048, too small for ReAct + 3-exchange history.
 
 **Chat LLM (Gradio agent)** — picked at runtime via the "Inference Engine" radio. Four backends:
-- `ollama_local` (default) — uses `OLLAMA_CHAT_MODEL`
-- `mlx` (Apple Silicon) — uses `MLX_CHAT_MODEL` (default `mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit`). Boots `mlx_lm.server` as a subprocess on `MLX_SERVER_HOST:MLX_SERVER_PORT` (default `127.0.0.1:8081`) exposing an OpenAI-compatible API; LangChain connects via `ChatOpenAI`. KV prompt cache: `MLX_PROMPT_CACHE_SLOTS` (default `4`) and `MLX_PROMPT_CACHE_BYTES` (default `8_000_000_000`).
+- `mlx` (default, Apple Silicon) — uses `MLX_CHAT_MODEL` (default `mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit`). Boots `mlx_lm.server` as a subprocess on `MLX_SERVER_HOST:MLX_SERVER_PORT` (default `127.0.0.1:8081`) exposing an OpenAI-compatible API; LangChain connects via `ChatOpenAI`. KV prompt cache: `MLX_PROMPT_CACHE_SLOTS` (default `4`) and `MLX_PROMPT_CACHE_BYTES` (default `8_000_000_000`). Pre-warmed at app startup.
+- `ollama_local` — uses `OLLAMA_CHAT_MODEL`. `ChatOllama` is constructed with `timeout=600` (raised from 120s) so large models like `qwen3.5:122b` / `gpt-oss:120b` don't time out on long generations.
 - `groq` / `gemini` — set `GROQ_API_KEY` / `GOOGLE_API_KEY`
 
 **Ingest LLM** — controlled by `INGEST_PROVIDER` in `.env`:
@@ -115,7 +115,8 @@ Gradio UI
 | `BibleEpubParser` | `src/ingestion/bible/epub_parser.py` | Extracts verse-by-verse text from NIV/ESV EPUB files |
 | `make_bible_tool` | `src/tools/bible_tool.py` | `get_bible_versions_tool` + `search_bible_tool` for the agent |
 | `MLXChatModel` / `get_ingest_llm` | `src/llm.py` | MLX-backed LangChain chat model (text-only, used for ingest); `get_ingest_llm()` reads `INGEST_PROVIDER` to select backend |
-| `get_chat_llm` / `_ensure_mlx_server` | `src/llm.py` | Chat-agent LLM factory; for `provider="mlx"` lazily spawns `mlx_lm.server` and returns `ChatOpenAI` (native tool-calling). Cleanup hook via `atexit` + `SIGTERM`/`SIGINT` registered at module load (main thread) |
+| `get_chat_llm` / `_ensure_mlx_server` | `src/llm.py` | Chat-agent LLM factory; for `provider="mlx"` lazily spawns `mlx_lm.server` and returns `ChatOpenAI` (native tool-calling). Cleanup via `atexit` + `SIGTERM`/`SIGINT`/`SIGHUP` registered at module load (main thread). `mlx_lm.server` stdout/stderr stream to the parent terminal at `INFO` level for debugging |
+| `_ensure_ollama` / `_shutdown_ollama` | `app.py` | Tracks `ollama serve` subprocess if we spawned it; cleanup only fires for self-spawned daemons (never touches a pre-existing system `ollama serve`). Same signal coverage as MLX |
 | `run_pipeline` | `ingest.py` | Orchestrates full classify→group→extract→embed |
 | `dagster_pipeline.py` | root | Weekly Saturday schedule wrapping `ingest.py` |
 | `app.py` | root | Gradio UI + LangGraph ReAct agent |
@@ -189,7 +190,9 @@ bible_versions(
 - `create_react_agent` from `langgraph.prebuilt` is used — NOT `langchain.agents.create_agent`.
 - BGE-M3 embedding model: 1.2 GB, multilingual (handles English + Mandarin sermons). Runs via `sentence-transformers` on MPS — no Ollama required.
 - MLX ingest: `MLXChatModel` wraps `mlx_lm.generate` as a LangChain `BaseChatModel`. Qwen3 thinking mode is disabled via `enable_thinking=False` in `apply_chat_template` (with `<think>` stripping as fallback) to avoid wasting tokens on reasoning during structured ingest tasks.
-- MLX chat: `MLXChatModel` does NOT implement `bind_tools`, so it can't drive the ReAct agent. The chat path uses `mlx_lm.server` (OpenAI-compat) + `ChatOpenAI` instead — see `_ensure_mlx_server()` in `src/llm.py`. The subprocess is spawned lazily on the first MLX chat request and shut down via `atexit` / `SIGTERM` (handlers must be registered at module load on the main thread; `signal.signal()` is a no-op from Gradio worker threads).
+- MLX chat: `MLXChatModel` does NOT implement `bind_tools`, so it can't drive the ReAct agent. The chat path uses `mlx_lm.server` (OpenAI-compat) + `ChatOpenAI` instead — see `_ensure_mlx_server()` in `src/llm.py`. The subprocess is spawned lazily on the first MLX chat request and shut down via `atexit` / `SIGTERM` / `SIGINT` / `SIGHUP` (handlers must be registered at module load on the main thread; `signal.signal()` is a no-op from Gradio worker threads). `SIGKILL` and hard crashes bypass cleanup — orphan `mlx_lm.server` / `ollama serve` processes can be detected with `pgrep -fl "mlx_lm|ollama serve"`.
+- Agent caching (`_agent_cache` / `_llm_cache` in `app.py`): cached **per provider** for `ollama_local` / `groq` / `gemini`, but **rebuilt per call for MLX**. Reason: `mlx_lm.server`'s OpenAI-compat layer can leave the httpx client of `ChatOpenAI` in a closed state after some streamed responses, surfacing as `"Cannot send a request, as the client has been closed."` — rebuilding per call avoids stale handles (model stays loaded in the server, so the overhead is millis of Pydantic construction). `_llm_cache` also holds a **strong reference to the LLM instance** to prevent garbage-collection from triggering httpx `__del__` close on the underlying client while LangGraph still holds the wrapped runnable.
+- "Client closed" retry: `respond()` in `app.py` wraps `agent.invoke()` in a 3-attempt loop that, on `"client has been closed"`, evicts both `_agent_cache[provider]` and `_llm_cache[provider]` and rebuilds before retrying. Other exceptions bubble immediately.
 - ReAct agent reuses ~3,238 tokens of system prompt + tool schemas per LLM call. For MLX, `--prompt-cache-size 4 --prompt-cache-bytes 8000000000` is passed to `mlx_lm.server` so the static preamble is only prefilled once — second/third calls are ~70-80% faster (5s → 1s in benchmarks).
 - Chat history window: `app.py:respond()` passes the last 6 history entries (3 user + 3 assistant exchanges) to the agent. Bump the slice if you need longer memory.
 - `OLLAMA_CHAT_MODEL` and `OLLAMA_INGEST_MODEL` are auto-detected via `_auto_detect_ollama_model()` in `src/llm.py`: if not set in `.env`, it queries `localhost:11434/api/tags` and picks the first available model, raising `RuntimeError` if none are found.
