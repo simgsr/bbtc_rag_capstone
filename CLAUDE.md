@@ -21,6 +21,12 @@ Ollama must be running locally: `ollama serve`
 Required Ollama models:
 - Chat LLM only — configurable via `OLLAMA_CHAT_MODEL` in `.env`:
   - default: `gemma4:latest` (9.6 GB); high-spec 96 GB+ RAM: `qwen3.5:122b`; 32 GB: `gemma4:31b`
+  - Ollama context window: `OLLAMA_NUM_CTX` (default `32768`) — Ollama's own default is 2048, too small for ReAct + 3-exchange history.
+
+**Chat LLM (Gradio agent)** — picked at runtime via the "Inference Engine" radio. Four backends:
+- `ollama_local` (default) — uses `OLLAMA_CHAT_MODEL`
+- `mlx` (Apple Silicon) — uses `MLX_CHAT_MODEL` (default `mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit`). Boots `mlx_lm.server` as a subprocess on `MLX_SERVER_HOST:MLX_SERVER_PORT` (default `127.0.0.1:8081`) exposing an OpenAI-compatible API; LangChain connects via `ChatOpenAI`. KV prompt cache: `MLX_PROMPT_CACHE_SLOTS` (default `4`) and `MLX_PROMPT_CACHE_BYTES` (default `8_000_000_000`).
+- `groq` / `gemini` — set `GROQ_API_KEY` / `GOOGLE_API_KEY`
 
 **Ingest LLM** — controlled by `INGEST_PROVIDER` in `.env`:
 - `mlx` (default, Apple Silicon): uses `MLX_INGEST_MODEL` (default `mlx-community/Qwen3-4B-4bit`); model auto-downloads from HuggingFace on first run
@@ -108,7 +114,8 @@ Gradio UI
 | `ingest_bible` | `src/ingestion/bible/bible_ingest.py` | Fetches Scrollmapper JSON + parses EPUBs → `bible_collection` |
 | `BibleEpubParser` | `src/ingestion/bible/epub_parser.py` | Extracts verse-by-verse text from NIV/ESV EPUB files |
 | `make_bible_tool` | `src/tools/bible_tool.py` | `get_bible_versions_tool` + `search_bible_tool` for the agent |
-| `MLXChatModel` / `get_ingest_llm` | `src/llm.py` | MLX-backed LangChain chat model; `get_ingest_llm()` reads `INGEST_PROVIDER` to select backend |
+| `MLXChatModel` / `get_ingest_llm` | `src/llm.py` | MLX-backed LangChain chat model (text-only, used for ingest); `get_ingest_llm()` reads `INGEST_PROVIDER` to select backend |
+| `get_chat_llm` / `_ensure_mlx_server` | `src/llm.py` | Chat-agent LLM factory; for `provider="mlx"` lazily spawns `mlx_lm.server` and returns `ChatOpenAI` (native tool-calling). Cleanup hook via `atexit` + `SIGTERM`/`SIGINT` registered at module load (main thread) |
 | `run_pipeline` | `ingest.py` | Orchestrates full classify→group→extract→embed |
 | `dagster_pipeline.py` | root | Weekly Saturday schedule wrapping `ingest.py` |
 | `app.py` | root | Gradio UI + LangGraph ReAct agent |
@@ -182,6 +189,9 @@ bible_versions(
 - `create_react_agent` from `langgraph.prebuilt` is used — NOT `langchain.agents.create_agent`.
 - BGE-M3 embedding model: 1.2 GB, multilingual (handles English + Mandarin sermons). Runs via `sentence-transformers` on MPS — no Ollama required.
 - MLX ingest: `MLXChatModel` wraps `mlx_lm.generate` as a LangChain `BaseChatModel`. Qwen3 thinking mode is disabled via `enable_thinking=False` in `apply_chat_template` (with `<think>` stripping as fallback) to avoid wasting tokens on reasoning during structured ingest tasks.
+- MLX chat: `MLXChatModel` does NOT implement `bind_tools`, so it can't drive the ReAct agent. The chat path uses `mlx_lm.server` (OpenAI-compat) + `ChatOpenAI` instead — see `_ensure_mlx_server()` in `src/llm.py`. The subprocess is spawned lazily on the first MLX chat request and shut down via `atexit` / `SIGTERM` (handlers must be registered at module load on the main thread; `signal.signal()` is a no-op from Gradio worker threads).
+- ReAct agent reuses ~3,238 tokens of system prompt + tool schemas per LLM call. For MLX, `--prompt-cache-size 4 --prompt-cache-bytes 8000000000` is passed to `mlx_lm.server` so the static preamble is only prefilled once — second/third calls are ~70-80% faster (5s → 1s in benchmarks).
+- Chat history window: `app.py:respond()` passes the last 6 history entries (3 user + 3 assistant exchanges) to the agent. Bump the slice if you need longer memory.
 - `OLLAMA_CHAT_MODEL` and `OLLAMA_INGEST_MODEL` are auto-detected via `_auto_detect_ollama_model()` in `src/llm.py`: if not set in `.env`, it queries `localhost:11434/api/tags` and picks the first available model, raising `RuntimeError` if none are found.
 - BGE-M3 embedding init in `SermonVectorStore` is lazy — deferred to first `_upsert_in_batches` or `_search` call, so importing the class does not require Ollama to be running.
 - `bible_ingest.py` treats `status="skipped"` as equivalent to `"indexed"` in `_is_indexed()`, so missing EPUB files are not retried on every run.

@@ -12,6 +12,7 @@ langchain-chroma
 langchain-ollama
 langchain-groq
 langchain-google-genai
+langchain-openai
 python-dotenv
 gradio
 langgraph

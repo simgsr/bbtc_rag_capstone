@@ -27,7 +27,7 @@ The LangGraph ReAct agent decides in real time which tool to invoke — SQL for 
 
 | Layer | Technology |
 |---|---|
-| **Chat LLM** | Gemma 4 / Qwen 3 (via Ollama, fully local) |
+| **Chat LLM** | Picked at runtime via "Inference Engine" radio: Ollama (local) · MLX Qwen3-30B-A3B (local, via `mlx_lm.server` + OpenAI-compat API) · Groq · Gemini |
 | **Ingest LLM** | Apple MLX (`Qwen3-4B-4bit`) on Neural Engine — default; Ollama / Groq / Gemini configurable |
 | **Embeddings** | BGE-M3 (1.2 GB, multilingual) via `sentence-transformers` on MPS (Apple Silicon GPU) |
 | **Vector store** | ChromaDB |
@@ -116,9 +116,10 @@ ollama pull gemma4:latest    # chat LLM — ~9.6 GB (see .env.example for smalle
 
 > **Hardware guide** — see `.env.example` for model recommendations based on available RAM (8 GB → 96 GB+).
 
-**Ingest and embeddings run fully on Apple Silicon without Ollama:**
+**Ingest, chat, and embeddings can all run fully on Apple Silicon without Ollama:**
 
 - **Ingest LLM** — [mlx-lm](https://github.com/ml-explore/mlx-lm) runs `Qwen3-4B-4bit` on the Neural Engine. The model (~2.5 GB) is downloaded from HuggingFace automatically on first run.
+- **Chat LLM (MLX option)** — when the "Inference Engine" radio is set to `Qwen3-30B-A3B-Instruct-2507-4bit [mlx]`, the app boots `mlx_lm.server` (OpenAI-compatible API) and connects via `ChatOpenAI` for full tool-calling. Model is ~17 GB MoE (3B active params); auto-downloads on first selection. Server is started lazily and shut down with the app via `atexit` + signal hooks.
 - **Embeddings** — `sentence-transformers` runs BGE-M3 on MPS (Apple Silicon GPU). The model (~570 MB) is downloaded from HuggingFace automatically on first run.
 
 Both are installed via `requirements.txt` — no extra steps needed.
@@ -204,7 +205,12 @@ cp .env.example .env
 
 | Variable | Default | Description |
 |---|---|---|
-| `OLLAMA_CHAT_MODEL` | `gemma4:latest` | LLM for the Gradio chat agent (Ollama) |
+| `OLLAMA_CHAT_MODEL` | `gemma4:latest` | LLM for the Gradio chat agent (Ollama backend) |
+| `OLLAMA_NUM_CTX` | `32768` | Ollama context window (default 2048 is too small for ReAct + history) |
+| `MLX_CHAT_MODEL` | `mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit` | MLX chat model, served via `mlx_lm.server`; auto-downloaded on first selection |
+| `MLX_SERVER_HOST` / `MLX_SERVER_PORT` | `127.0.0.1` / `8081` | Host/port for the local `mlx_lm.server` subprocess |
+| `MLX_PROMPT_CACHE_SLOTS` | `4` | KV-cache slots — reuses system prompt + tool schemas across ReAct calls |
+| `MLX_PROMPT_CACHE_BYTES` | `8000000000` | KV-cache budget in bytes (8 GB) |
 | `INGEST_PROVIDER` | `mlx` | Ingest LLM backend: `mlx` \| `ollama_local` \| `groq` \| `gemini` |
 | `MLX_INGEST_MODEL` | `mlx-community/Qwen3-4B-4bit` | MLX ingest model; auto-downloaded on first run |
 | `OLLAMA_INGEST_MODEL` | `gemma4:latest` | Only used when `INGEST_PROVIDER=ollama_local` |
@@ -343,7 +349,7 @@ make test
 │   │   ├── sql_tool.py           # SQL query tool
 │   │   ├── vector_tool.py        # Sermon semantic search tool
 │   │   └── viz_tool.py           # Plotly chart tool
-│   ├── llm.py                    # Unified LLM client (MLX / Ollama / Groq / Gemini)
+│   ├── llm.py                    # Unified LLM client (MLX / Ollama / Groq / Gemini); manages mlx_lm.server subprocess + cleanup
 │   └── ui_helpers.py             # Gradio rendering helpers
 ├── tests/                        # 103 unit tests
 ├── scripts/
@@ -359,6 +365,6 @@ make test
 
 - **Classify-before-download**: The scraper classifies filenames against a regex before downloading, so handout PDFs are never fetched.
 - **~50% image-based PDFs**: Many PS slide files have no extractable text — verse extraction relies entirely on filename regex parsing.
-- **Fully local by default**: Ollama handles chat LLM inference only. Ingest LLM runs on MLX (Neural Engine) and embeddings run on MPS via `sentence-transformers` — both without any Ollama server overhead. Groq/Gemini are optional cloud fallbacks for ingest.
+- **Fully local by default**: Chat LLM runs on Ollama OR MLX (`mlx_lm.server` for the 30B MoE option). Ingest LLM runs on MLX (Neural Engine) and embeddings run on MPS via `sentence-transformers` — no Ollama needed for ingest or embeddings. Groq/Gemini are optional cloud fallbacks.
 - **NG labeled fields are reliable from 2022+**: Pre-2022 files fall back to `filename_parser.py` heuristics.
 - **Manifest-based pairing**: The scraper writes `_manifest_*.json` files that record which PDFs came from the same sermon page. The grouper reads these first for exact pairing, then falls back to fuzzy date/topic matching.

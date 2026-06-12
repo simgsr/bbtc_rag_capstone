@@ -8,7 +8,7 @@ import time
 import urllib.request
 from dotenv import load_dotenv
 from src.storage.chroma_store import SermonVectorStore
-from src.llm import get_llm, GROQ_MODEL, GEMINI_MODEL, OLLAMA_CHAT_MODEL
+from src.llm import get_llm, get_chat_llm, GROQ_MODEL, GEMINI_MODEL, OLLAMA_CHAT_MODEL, MLX_CHAT_MODEL
 from src.ui_helpers import extract_chart_path, fetch_archive_stats, render_stats_bar
 from src.storage.sqlite_store import SermonRegistry
 from src.tools.sql_tool import make_sql_tool
@@ -186,7 +186,7 @@ try:
 
     def get_agent(provider: str = "ollama_local"):
         if provider not in _agent_cache:
-            _llm = get_llm(provider=provider, temperature=0.1)
+            _llm = get_chat_llm(provider=provider, temperature=0.1)
             _agent_cache[provider] = create_react_agent(
                 _llm,
                 tools=[sql_tool, vector_tool, viz_tool, get_bible_versions_tool, search_bible_tool],
@@ -223,6 +223,9 @@ def _inference_badge_html(provider: str) -> str:
         has_key = bool(os.getenv("GOOGLE_API_KEY"))
         status = "online" if has_key else "offline"
         label = f"gemini · {GEMINI_MODEL}" if has_key else "gemini · no key"
+    elif provider == "mlx":
+        status = "online"
+        label = f"{MLX_CHAT_MODEL.split('/')[-1]} · mlx"
     else:  # ollama_local
         status = _ollama_status
         label = f"{OLLAMA_CHAT_MODEL} · local"
@@ -246,6 +249,7 @@ _PROVIDER_DISPLAY = {
     "ollama_local": OLLAMA_CHAT_MODEL,
     "groq": GROQ_MODEL,
     "gemini": GEMINI_MODEL,
+    "mlx": MLX_CHAT_MODEL.split("/")[-1],
 }
 
 
@@ -289,7 +293,7 @@ def respond(message, history, provider="ollama_local"):
     except Exception as e:
         return f"⚠️ Could not load {provider} agent: {e}", [], {}, 0.0
 
-    truncated_history = history[-2:] if len(history) > 2 else history
+    truncated_history = history[-6:] if len(history) > 6 else history
     messages = []
     for turn in truncated_history:
         if turn["role"] == "user":
@@ -758,6 +762,7 @@ with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
             provider_radio = gr.Radio(
                 choices=[
                     f"{OLLAMA_CHAT_MODEL} [local]",
+                    f"{MLX_CHAT_MODEL.split('/')[-1]} [mlx]",
                     "Groq [cloud]",
                     "Gemini 3 Flash [cloud]",
                 ],
@@ -785,6 +790,8 @@ with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
             provider = "groq"
         elif "Gemini" in radio_val:
             provider = "gemini"
+        elif "[mlx]" in radio_val:
+            provider = "mlx"
         else:
             provider = "ollama_local"
         return provider, _inference_badge_html(provider)
