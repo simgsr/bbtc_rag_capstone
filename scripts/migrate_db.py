@@ -1,3 +1,13 @@
+"""One-time SQLite migration: adds COLLATE NOCASE to sermons/verses text columns.
+
+This migration has already been applied to the canonical `data/sermons.db`.
+It is kept here for reproducibility on fresh clones that restore from an
+older snapshot. New ingests pick up the schema from `src/storage/sqlite_store.py`
+and do not need this script.
+
+Usage:
+    python scripts/migrate_db.py
+"""
 import sqlite3
 import os
 

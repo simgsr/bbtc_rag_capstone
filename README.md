@@ -313,7 +313,7 @@ make test
 # or: python -m pytest tests/ -v
 ```
 
-103 tests covering file classification, filename parsing, metadata extraction, verse normalization, sermon grouping, vector retrieval, UI helpers, and SQLite storage.
+107 tests covering file classification, filename parsing, metadata extraction, verse normalization, sermon grouping, vector retrieval, UI helpers, and SQLite storage.
 
 ---
 
@@ -327,6 +327,7 @@ make test
 ├── requirements.txt
 ├── .env.example
 ├── Makefile
+├── LICENSE                       # MIT
 ├── src/
 │   ├── ingestion/
 │   │   ├── bible/
@@ -336,7 +337,8 @@ make test
 │   │   ├── filename_parser.py    # Fallback metadata from filename
 │   │   ├── ng_extractor.py       # Regex metadata from NG PDFs
 │   │   ├── ps_extractor.py       # Verse extraction from PS filenames
-│   │   └── sermon_grouper.py     # Pairs NG+PS by date/topic
+│   │   ├── sermon_grouper.py     # Pairs NG+PS by date/topic
+│   │   └── speaker_from_filename.py  # Filename-based speaker fallback
 │   ├── scraper/
 │   │   └── bbtc_scraper.py       # Cloudflare-bypass scraper
 │   ├── storage/
@@ -351,12 +353,13 @@ make test
 │   │   └── viz_tool.py           # Plotly chart tool
 │   ├── llm.py                    # Unified LLM client (MLX / Ollama / Groq / Gemini); manages mlx_lm.server subprocess + cleanup
 │   └── ui_helpers.py             # Gradio rendering helpers
-├── tests/                        # 103 unit tests
+├── tests/                        # 107 unit tests
 ├── scripts/
+│   ├── migrate_db.py             # One-time COLLATE NOCASE migration (already applied)
 │   └── normalize_books.py        # One-time book-name migration utility
 └── docs/
-    ├── design/                   # Architecture and feature design notes
-    └── plans/                    # Implementation plans
+    ├── plans/                    # Live implementation plans
+    └── archive/                  # Historical design + plans for shipped features
 ```
 
 ---
@@ -368,3 +371,9 @@ make test
 - **Fully local by default**: Chat LLM runs on Ollama OR MLX (`mlx_lm.server` for the 30B MoE option). Ingest LLM runs on MLX (Neural Engine) and embeddings run on MPS via `sentence-transformers` — no Ollama needed for ingest or embeddings. Groq/Gemini are optional cloud fallbacks.
 - **NG labeled fields are reliable from 2022+**: Pre-2022 files fall back to `filename_parser.py` heuristics.
 - **Manifest-based pairing**: The scraper writes `_manifest_*.json` files that record which PDFs came from the same sermon page. The grouper reads these first for exact pairing, then falls back to fuzzy date/topic matching.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).

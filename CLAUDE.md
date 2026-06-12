@@ -177,7 +177,7 @@ bible_versions(
 - Sources: KJV, ASV, YLT from Scrollmapper JSON (public domain); NIV, ESV from local EPUB files
 - Metadata per chunk: `{book, chapter, verse, version, reference}`
 - IDs: `{VERSION}_{Book} {chapter}:{verse}` (e.g. `NIV_John 3:16`)
-- Embeddings: `BGE-M3` via Ollama
+- Embeddings: `BGE-M3` via sentence-transformers on MPS
 
 ## Notable Quirks
 
