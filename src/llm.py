@@ -36,6 +36,9 @@ MLX_INGEST_MODEL = os.getenv("MLX_INGEST_MODEL", "mlx-community/Qwen3-4B-4bit")
 MLX_CHAT_MODEL = os.getenv("MLX_CHAT_MODEL", "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit")
 MLX_SERVER_HOST = os.getenv("MLX_SERVER_HOST", "127.0.0.1")
 MLX_SERVER_PORT = int(os.getenv("MLX_SERVER_PORT", "8081"))
+# mlx_lm.server caps completions at 512 tokens when a request omits max_tokens,
+# which truncates chat answers mid-sentence. Set an explicit, generous cap.
+MLX_MAX_TOKENS = int(os.getenv("MLX_MAX_TOKENS", "4096"))
 INGEST_PROVIDER = os.getenv("INGEST_PROVIDER", "ollama_local")
 
 _mlx_server_proc = None
@@ -200,6 +203,7 @@ def get_chat_llm(provider: str = "ollama_local", temperature: float = 0.1):
             temperature=temperature,
             base_url=base_url,
             api_key="not-needed",
+            max_tokens=MLX_MAX_TOKENS,
         )
     return get_llm(provider=provider, temperature=temperature)
 
