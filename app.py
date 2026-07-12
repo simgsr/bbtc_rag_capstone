@@ -230,8 +230,8 @@ try:
     _agent_cache: dict = {}
     _llm_cache: dict = {}  # strong refs to LLMs — prevents GC from closing their httpx clients
 
-    def _build_agent(provider: str):
-        _llm = get_chat_llm(provider=provider, temperature=0.1)
+    def _build_agent(provider: str, model: str = None):
+        _llm = get_chat_llm(provider=provider, temperature=0.1, model=model)
         _llm_cache[provider] = _llm  # strong ref so httpx client isn't GC-closed
         return create_react_agent(
             _llm,
@@ -239,14 +239,15 @@ try:
             prompt=SystemMessage(content=SYSTEM_PROMPT),
         )
 
-    def get_agent(provider: str = "ollama_local"):
+    def get_agent(provider: str = "ollama_local", model: str = None):
         # MLX path uses mlx_lm.server's OpenAI-compat layer, which can leave the
         # httpx client in a closed state after some streamed responses. Rebuild
-        # per call — the model stays loaded in mlx_lm.server so the cost is millis.
+        # per call — the model stays loaded in mlx_lm.server so the cost is millis
+        # (and it lets the server swap weights when a different MLX model is picked).
         if provider == "mlx":
-            return _build_agent(provider)
+            return _build_agent(provider, model)
         if provider not in _agent_cache:
-            _agent_cache[provider] = _build_agent(provider)
+            _agent_cache[provider] = _build_agent(provider, model)
         return _agent_cache[provider]
 
     # Pre-warm MLX agent at startup (spawns mlx_lm.server + loads model)
@@ -268,8 +269,36 @@ _stats_bar_html = (
 
 _ollama_status = "online" if _ollama_up else "offline"
 
+# ── Inference Engine options ─────────────────────────────────────────────────
+# Selectable MLX chat models (the configured default first, then other known repos).
+# Only one MLX model is served at a time; switching restarts mlx_lm.server (see src/llm.py).
+_KNOWN_MLX_MODELS = [
+    "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit",
+    "mlx-community/Qwen3-Next-80B-A3B-Instruct-8bit",
+]
+MLX_CHAT_MODELS = list(dict.fromkeys([MLX_CHAT_MODEL, *_KNOWN_MLX_MODELS]))
 
-def _inference_badge_html(provider: str) -> str:
+# Dropdown choices as (label, value) — value encodes provider (+ MLX model repo).
+_ENGINE_CHOICES = (
+    [(f"{m.split('/')[-1]}  ·  MLX", f"mlx::{m}") for m in MLX_CHAT_MODELS]
+    + [
+        (f"{OLLAMA_CHAT_MODEL}  ·  Ollama", "ollama_local"),
+        ("Groq  ·  Cloud", "groq"),
+        ("Gemini 3 Flash  ·  Cloud", "gemini"),
+    ]
+)
+_DEFAULT_SELECTION = f"mlx::{MLX_CHAT_MODEL}"
+
+
+def _parse_selection(selection: str):
+    """Split a dropdown value into (provider, model). model is None for non-MLX providers."""
+    if selection and selection.startswith("mlx::"):
+        return "mlx", selection.split("::", 1)[1]
+    return selection or "ollama_local", None
+
+
+def _inference_badge_html(selection: str) -> str:
+    provider, model = _parse_selection(selection)
     if provider == "groq":
         has_key = bool(os.getenv("GROQ_API_KEY"))
         status = "online" if has_key else "offline"
@@ -280,7 +309,7 @@ def _inference_badge_html(provider: str) -> str:
         label = f"gemini · {GEMINI_MODEL}" if has_key else "gemini · no key"
     elif provider == "mlx":
         status = "online"
-        label = f"{MLX_CHAT_MODEL.split('/')[-1]} · mlx"
+        label = f"{(model or MLX_CHAT_MODEL).split('/')[-1]} · mlx"
     else:  # ollama_local
         status = _ollama_status
         label = f"{OLLAMA_CHAT_MODEL} · local"
@@ -308,7 +337,7 @@ _PROVIDER_DISPLAY = {
 }
 
 
-def _build_meta_footer(tools_used: list, token_info: dict, provider: str = "", elapsed: float = 0) -> str:
+def _build_meta_footer(tools_used: list, token_info: dict, provider: str = "", elapsed: float = 0, model: str = None) -> str:
     left = ""
     if tools_used:
         labels = [_TOOL_LABELS.get(t, t) for t in tools_used]
@@ -316,7 +345,10 @@ def _build_meta_footer(tools_used: list, token_info: dict, provider: str = "", e
 
     right_parts = []
     if provider:
-        model_name = _PROVIDER_DISPLAY.get(provider, provider)
+        if provider == "mlx" and model:
+            model_name = model.split("/")[-1]
+        else:
+            model_name = _PROVIDER_DISPLAY.get(provider, provider)
         right_parts.append(f"LangGraph ReAct · {model_name}")
     if elapsed:
         right_parts.append(f"{elapsed:.1f}s")
@@ -330,21 +362,23 @@ def _build_meta_footer(tools_used: list, token_info: dict, provider: str = "", e
 
     return (
         "<div style='margin-top:10px;padding-top:8px;"
-        "border-top:1px solid #e0e0e0;"
+        "border-top:1px solid var(--c-border-light);"
         "display:flex;justify-content:space-between;align-items:center;"
-        "font-size:0.68rem;font-family:monospace;color:#888888;letter-spacing:0.4px;'>"
+        "font-size:0.68rem;font-family:monospace;color:var(--c-text-3);letter-spacing:0.4px;'>"
         f"<span>{left}</span>"
         f"<span>{right}</span>"
         "</div>"
     )
 
 
-def respond(message, history, provider="ollama_local"):
+def respond(message, history, selection="ollama_local"):
     if not _init_ok or get_agent is None:
         return "⚠️ Agent not initialized. Check that Ollama is running.", [], {}, 0.0
 
+    provider, model = _parse_selection(selection)
+
     try:
-        agent = get_agent(provider)
+        agent = get_agent(provider, model)
     except Exception as e:
         return f"⚠️ Could not load {provider} agent: {e}", [], {}, 0.0
 
@@ -380,7 +414,7 @@ def respond(message, history, provider="ollama_local"):
                     raise
                 _agent_cache.pop(provider, None)
                 _llm_cache.pop(provider, None)
-                agent = get_agent(provider)
+                agent = get_agent(provider, model)
         if result is None:
             raise last_err
         elapsed = time.time() - t0
@@ -434,26 +468,35 @@ custom_css = """
 @import url('https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap');
 
 :root {
-  --c-bg:           #ebebeb;
+  --c-bg:           #f3f4f6;
   --c-surface:      #ffffff;
-  --c-border:       #d8d8d8;
-  --c-border-light: #e8e8e8;
-  --c-text:         #111111;
-  --c-text-2:       #444444;
-  --c-text-3:       #888888;
-  --c-user-bg:      #f5f5f5;
-  --c-user-border:  #d8d8d8;
-  --c-user-text:    #111111;
+  --c-border:       #d7dae0;
+  --c-border-light: #e6e8ec;
+  --c-text:         #0f172a;
+  --c-text-2:       #3f4757;
+  --c-text-3:       #667085;
+  --c-user-bg:      #f4f5f7;
+  --c-user-border:  #d7dae0;
+  --c-user-text:    #0f172a;
   --c-asst-bg:      #ffffff;
-  --c-asst-border:  #e8e8e8;
-  --c-asst-text:    #111111;
-  --c-input-text:   #111111;
-  --c-input-ph:     #aaaaaa;
+  --c-asst-border:  #e6e8ec;
+  --c-asst-text:    #0f172a;
+  --c-input-text:   #0f172a;
+  --c-input-ph:     #98a2b3;
   --c-card-bg:      #ffffff;
   --c-card-border:  #e0e0e0;
   --c-card-sel-bg:  #ede9fe;
   --c-card-hov-bg:  #f5f3ff;
   --c-card-hov-bdr: #a78bfa;
+  /* brand accent (cohesive indigo) */
+  --c-accent:       #4f46e5;
+  --c-accent-hov:   #4338ca;
+  --c-accent-active:#3730a3;
+  --c-accent-soft:  #eef2ff;
+  /* elevation */
+  --shadow-sm: 0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.07);
+  --shadow-md: 0 4px 14px rgba(16,24,40,0.08);
+  --shadow-focus: 0 0 0 3px rgba(79,70,229,0.18);
   --c-p1-bg:#ede9fe; --c-p1-bdr:#a78bfa; --c-p1-txt:#3b0764;
   --c-p2-bg:#dcfce7; --c-p2-bdr:#4ade80; --c-p2-txt:#14532d;
   --c-p3-bg:#fef9c3; --c-p3-bdr:#facc15; --c-p3-txt:#713f12;
@@ -483,14 +526,15 @@ body { background: var(--c-bg) !important; }
 
 /* Header */
 #title-container {
-    padding: 14px 20px;
+    padding: 16px 22px;
     background: var(--c-surface);
     border: 1px solid var(--c-border);
-    border-radius: 4px;
+    border-radius: 8px;
+    box-shadow: var(--shadow-sm);
     display: flex;
     align-items: center;
     gap: 16px;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
 }
 #title-container img { height: 36px; opacity: 0.85; }
 #title-text h1 {
@@ -518,8 +562,9 @@ body { background: var(--c-bg) !important; }
     gap: 0;
     background: var(--c-surface);
     border: 1px solid var(--c-border);
-    border-radius: 4px;
-    padding: 8px 16px;
+    border-radius: 8px;
+    box-shadow: var(--shadow-sm);
+    padding: 10px 18px;
     margin-bottom: 12px;
     color: var(--c-text-2);
     font-size: 0.78rem;
@@ -529,9 +574,10 @@ body { background: var(--c-bg) !important; }
 
 /* Chat area */
 .chatbot-container {
-    border-radius: 4px !important;
+    border-radius: 8px !important;
     border: 1px solid var(--c-border) !important;
     background: var(--c-surface) !important;
+    box-shadow: var(--shadow-sm) !important;
     overflow: hidden !important;
 }
 
@@ -559,24 +605,27 @@ body { background: var(--c-bg) !important; }
 
 /* Plotly chart */
 .gradio-plot {
-    border-radius: 4px !important;
+    border-radius: 8px !important;
     overflow: hidden !important;
     border: 1px solid var(--c-border) !important;
+    box-shadow: var(--shadow-sm) !important;
     margin-top: 8px !important;
     background: var(--c-surface) !important;
 }
 
 /* Input row — unified box */
 #input-row {
-    margin-top: 8px !important;
+    margin-top: 10px !important;
     border: 1px solid var(--c-border) !important;
-    border-radius: 4px !important;
+    border-radius: 8px !important;
     background: var(--c-surface) !important;
+    box-shadow: var(--shadow-sm) !important;
     overflow: hidden !important;
     gap: 0 !important;
     align-items: stretch !important;
+    transition: border-color 0.12s ease, box-shadow 0.12s ease !important;
 }
-#input-row:focus-within { border-color: #555555 !important; }
+#input-row:focus-within { border-color: var(--c-accent) !important; box-shadow: var(--shadow-focus) !important; }
 #input-row > div { padding: 0 !important; margin: 0 !important; border: none !important; background: transparent !important; }
 #input-row textarea {
     font-family: 'Source Code Pro', monospace !important;
@@ -592,9 +641,9 @@ body { background: var(--c-bg) !important; }
 
 /* Submit button */
 .btn-primary {
-    background: #222222 !important;
+    background: var(--c-accent) !important;
     border: none !important;
-    border-left: 1px solid var(--c-border) !important;
+    border-left: 1px solid var(--c-accent) !important;
     border-radius: 0 !important;
     color: #ffffff !important;
     font-weight: 600 !important;
@@ -604,10 +653,11 @@ body { background: var(--c-bg) !important; }
     font-family: 'Source Code Pro', monospace !important;
     box-shadow: none !important;
     min-width: 72px !important;
+    transition: background 0.12s ease !important;
 }
-.btn-primary:hover { background: #444444 !important; transform: none !important; filter: none !important; box-shadow: none !important; }
-.btn-primary:active { background: #000000 !important; }
-.btn-primary:disabled { background: #888888 !important; cursor: not-allowed !important; }
+.btn-primary:hover { background: var(--c-accent-hov) !important; transform: none !important; filter: none !important; box-shadow: none !important; }
+.btn-primary:active { background: var(--c-accent-active) !important; }
+.btn-primary:disabled { background: #b6b9c2 !important; cursor: not-allowed !important; }
 
 /* Secondary button (Clear) */
 button.secondary {
@@ -630,8 +680,9 @@ button.secondary:hover {
 .sidebar {
     background: var(--c-surface) !important;
     border: 1px solid var(--c-border) !important;
-    padding: 18px !important;
-    border-radius: 4px !important;
+    padding: 20px !important;
+    border-radius: 8px !important;
+    box-shadow: var(--shadow-sm) !important;
 }
 .sidebar h3 {
     font-family: 'Source Code Pro', monospace !important;
@@ -654,9 +705,9 @@ button.secondary:hover {
 
 /* Status badges */
 .status-badge {
-    padding: 2px 8px;
-    border-radius: 2px;
-    font-size: 0.56rem;
+    padding: 2px 9px;
+    border-radius: 3px;
+    font-size: 0.62rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 1px;
@@ -666,30 +717,44 @@ button.secondary:hover {
 .status-online  { background: #dcfce7; color: #166534; border-color: #4ade80; }
 .status-offline { background: #fee2e2; color: #7f1d1d; border-color: #f87171; }
 
-/* Radio model cards */
-#model-radio label {
+/* Inference Engine dropdown */
+#model-dropdown, #model-dropdown .wrap, #model-dropdown .wrap-inner { background: transparent !important; }
+#model-dropdown input {
     background: var(--c-card-bg) !important;
     border: 1px solid var(--c-card-border) !important;
-    border-radius: 3px !important;
-    padding: 7px 10px !important;
-    margin-bottom: 5px !important;
-    cursor: pointer !important;
-    transition: all 0.12s ease !important;
+    border-radius: 6px !important;
+    color: var(--c-text) !important;
     font-family: 'Source Code Pro', monospace !important;
     font-size: 0.78rem !important;
+    padding: 9px 12px !important;
+    cursor: pointer !important;
+    transition: border-color 0.12s ease, box-shadow 0.12s ease !important;
+}
+#model-dropdown input:focus {
+    border-color: var(--c-accent) !important;
+    box-shadow: var(--shadow-focus) !important;
+    outline: none !important;
+}
+#model-dropdown ul.options {
+    background: var(--c-surface) !important;
+    border: 1px solid var(--c-border) !important;
+    border-radius: 6px !important;
+    box-shadow: var(--shadow-md) !important;
+    font-family: 'Source Code Pro', monospace !important;
+    z-index: 120 !important;
+    padding: 4px !important;
+}
+#model-dropdown ul.options li.item {
     color: var(--c-text) !important;
-    display: flex !important;
-    align-items: center !important;
-    gap: 8px !important;
+    font-size: 0.76rem !important;
+    padding: 8px 10px !important;
+    border-radius: 4px !important;
 }
-#model-radio label:has(input:checked) {
-    background: var(--c-card-sel-bg) !important;
-    border-color: #7c3aed !important;
-    border-left: 3px solid #7c3aed !important;
-}
-#model-radio label:hover:not(:has(input:checked)) {
-    background: var(--c-card-hov-bg) !important;
-    border-color: var(--c-card-hov-bdr) !important;
+#model-dropdown ul.options li.item:hover,
+#model-dropdown ul.options li.item.selected,
+#model-dropdown ul.options li.active {
+    background: var(--c-accent-soft) !important;
+    color: var(--c-accent-active) !important;
 }
 
 /* Quick query pills */
@@ -771,6 +836,16 @@ _QUICK_QUERY_FULL = [
     ["Sermons Specific: Summarize the key message and scripture shared in last week's sermon."],
 ]
 
+_force_light_js = """
+function() {
+  const url = new URL(window.location);
+  if (url.searchParams.get('__theme') !== 'light') {
+    url.searchParams.set('__theme', 'light');
+    window.location.replace(url.href);
+  }
+}
+"""
+
 with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
     with gr.Row(elem_id="header"):
         with gr.Column(scale=4):
@@ -819,32 +894,35 @@ with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
             gr.HTML(f"""
                 <div style='display: flex; flex-direction: column; gap: 12px;'>
                     <div style='display: flex; justify-content: space-between; align-items: center;'>
-                        <span style='color: #94a3b8;'>Vector Store</span>
+                        <span style='color: var(--c-text-2); font-size: 0.8rem; font-family: "Source Code Pro", monospace;'>Vector Store</span>
                         <span class='status-badge status-{vec_status}'>{vec_status}</span>
                     </div>
                     <div style='display: flex; justify-content: space-between; align-items: center;'>
-                        <span style='color: #94a3b8;'>SQL Registry</span>
+                        <span style='color: var(--c-text-2); font-size: 0.8rem; font-family: "Source Code Pro", monospace;'>SQL Registry</span>
                         <span class='status-badge status-online'>active</span>
                     </div>
                 </div>
             """)
-            inference_status = gr.HTML(_inference_badge_html("mlx"))
+            inference_status = gr.HTML(_inference_badge_html(_DEFAULT_SELECTION))
 
             gr.Markdown("---")
             gr.Markdown("### Inference Engine")
-            provider_radio = gr.Radio(
-                choices=[
-                    f"{MLX_CHAT_MODEL.split('/')[-1]} [mlx]",
-                    f"{OLLAMA_CHAT_MODEL} [local]",
-                    "Groq [cloud]",
-                    "Gemini 3 Flash [cloud]",
-                ],
-                value=f"{MLX_CHAT_MODEL.split('/')[-1]} [mlx]",
+            provider_dropdown = gr.Dropdown(
+                choices=_ENGINE_CHOICES,
+                value=_DEFAULT_SELECTION,
                 show_label=False,
                 interactive=True,
-                elem_id="model-radio",
+                filterable=False,
+                container=False,
+                elem_id="model-dropdown",
             )
-            provider_state = gr.State("mlx")
+            gr.HTML(
+                "<p style='margin:6px 2px 0;font-size:0.68rem;line-height:1.45;"
+                "color:var(--c-text-3);font-family:\"Source Code Pro\",monospace;'>"
+                "Switching to a larger MLX model reloads its weights — the first response "
+                "after a switch can take a few minutes.</p>"
+            )
+            provider_state = gr.State(_DEFAULT_SELECTION)
 
             gr.Markdown("---")
             gr.Markdown("### Capabilities")
@@ -858,20 +936,13 @@ with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
             gr.Markdown("---")
             clear = gr.Button("Clear Chat", variant="secondary")
 
-    def _on_provider_change(radio_val):
-        if "Groq" in radio_val:
-            provider = "groq"
-        elif "Gemini" in radio_val:
-            provider = "gemini"
-        elif "[mlx]" in radio_val:
-            provider = "mlx"
-        else:
-            provider = "ollama_local"
-        return provider, _inference_badge_html(provider)
+    def _on_provider_change(selection):
+        # `selection` is the dropdown value (e.g. "mlx::<repo>", "groq"). Store it as-is.
+        return selection, _inference_badge_html(selection)
 
-    provider_radio.change(
+    provider_dropdown.change(
         _on_provider_change,
-        inputs=provider_radio,
+        inputs=provider_dropdown,
         outputs=[provider_state, inference_status],
     )
 
@@ -880,16 +951,17 @@ with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
             history = []
         return "", history + [{"role": "user", "content": user_message}]
 
-    def bot_msg(history: list, provider: str):
+    def bot_msg(history: list, selection: str):
         if not history or history[-1]["role"] != "user":
             return history
 
         user_message = history[-1]["content"]
         chat_history = history[:-1]
-        bot_message, tools_used, token_info, elapsed = respond(user_message, chat_history, provider)
+        bot_message, tools_used, token_info, elapsed = respond(user_message, chat_history, selection)
 
+        provider, model = _parse_selection(selection)
         text, chart_path = extract_chart_path(bot_message)
-        meta_footer = _build_meta_footer(tools_used, token_info, provider, elapsed)
+        meta_footer = _build_meta_footer(tools_used, token_info, provider, elapsed, model)
 
         content = []
         if text:
@@ -938,5 +1010,6 @@ if __name__ == "__main__":
         server_port=port,
         theme=gr.themes.Default(),
         css=custom_css,
+        js=_force_light_js,
         allowed_paths=["/tmp"]
     )

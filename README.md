@@ -27,9 +27,9 @@ The LangGraph ReAct agent decides in real time which tool to invoke — SQL for 
 
 | Layer | Technology |
 |---|---|
-| **Chat LLM** | Picked at runtime via "Inference Engine" radio: MLX Qwen3-30B-A3B (default, local, via `mlx_lm.server` + OpenAI-compat API) · Ollama (local) · Groq · Gemini |
+| **Chat LLM** | Picked at runtime via "Inference Engine" radio: MLX Qwen3-30B-A3B (default, local, via `mlx_lm.server` + OpenAI-compat API; swappable to Qwen3-Next-80B on 128 GB machines) · Ollama (local) · Groq · Gemini |
 | **Ingest LLM** | Apple MLX (`Qwen3-4B-4bit`) on Neural Engine — default; Ollama / Groq / Gemini configurable |
-| **Embeddings** | BGE-M3 (1.2 GB, multilingual) via `sentence-transformers` on MPS (Apple Silicon GPU) |
+| **Embeddings** | BGE-M3 (multilingual) — `sentence-transformers` on MPS by default, or native MLX (`bge-m3` / `Qwen3-Embedding`) via `EMBED_BACKEND` |
 | **Vector store** | ChromaDB |
 | **Structured store** | SQLite |
 | **Agent framework** | LangGraph ReAct (`langgraph.prebuilt`) |
@@ -207,13 +207,15 @@ cp .env.example .env
 |---|---|---|
 | `OLLAMA_CHAT_MODEL` | `gemma4:latest` | LLM for the Gradio chat agent (Ollama backend) |
 | `OLLAMA_NUM_CTX` | `32768` | Ollama context window (default 2048 is too small for ReAct + history) |
-| `MLX_CHAT_MODEL` | `mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit` | MLX chat model, served via `mlx_lm.server`; auto-downloaded on first selection |
+| `MLX_CHAT_MODEL` | `mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit` | MLX chat model, served via `mlx_lm.server`; auto-downloaded on first selection. One model is served at a time — set to `mlx-community/Qwen3-Next-80B-A3B-Instruct-8bit` (~85 GB, needs 128 GB RAM) for the highest-quality option. See `.env.example` for the full RAM tier list. |
 | `MLX_SERVER_HOST` / `MLX_SERVER_PORT` | `127.0.0.1` / `8081` | Host/port for the local `mlx_lm.server` subprocess |
 | `MLX_PROMPT_CACHE_SLOTS` | `4` | KV-cache slots — reuses system prompt + tool schemas across ReAct calls |
 | `MLX_PROMPT_CACHE_BYTES` | `8000000000` | KV-cache budget in bytes (8 GB) |
 | `INGEST_PROVIDER` | `mlx` | Ingest LLM backend: `mlx` \| `ollama_local` \| `groq` \| `gemini` |
 | `MLX_INGEST_MODEL` | `mlx-community/Qwen3-4B-4bit` | MLX ingest model; auto-downloaded on first run |
 | `OLLAMA_INGEST_MODEL` | `gemma4:latest` | Only used when `INGEST_PROVIDER=ollama_local` |
+| `EMBED_BACKEND` | `st` | Embedder: `st` (BAAI/bge-m3 via sentence-transformers, 1024-dim) · `mlx_bge` (`mlx-community/bge-m3-mlx-fp16`, 1024-dim, ~2× faster) · `mlx_qwen` (`Qwen3-Embedding-8B`, 4096-dim, higher MTEB but slower). Switching backends requires a wipe + re-ingest of both collections. |
+| `MLX_EMBED_MODEL` / `MLX_EMBED_MAX_LEN` | *(backend default)* / `1024` | Override the HF repo / token cap for the `mlx_*` embedding backends |
 | `GROQ_API_KEY` | *(empty)* | Optional Groq cloud inference |
 | `GOOGLE_API_KEY` | *(empty)* | Optional Gemini cloud inference |
 
