@@ -1,3 +1,23 @@
+"""LLM factory for both the ingest pipeline and the chat agent.
+
+Public entry points:
+
+  * ``get_ingest_llm()`` — text-only LangChain chat model used during ingest
+    (metadata extraction + summarisation). Backend chosen by ``INGEST_PROVIDER``
+    (``mlx`` | ``ollama_local`` | ``groq`` | ``gemini``). The MLX path uses
+    ``MLXChatModel``, a ``BaseChatModel`` wrapping ``mlx_lm.generate`` (thinking
+    mode disabled for structured output).
+  * ``get_chat_llm(provider, ...)`` — the chat-agent model, which MUST support
+    native tool-calling for the ReAct agent. For ``mlx`` it lazily spawns
+    ``mlx_lm.server`` (OpenAI-compatible) via ``_ensure_mlx_server`` and returns
+    a ``ChatOpenAI``; other providers return their LangChain chat models.
+  * ``get_llm(...)`` — thin back-compat wrapper kept for existing callers.
+
+The MLX server subprocess is reaped on exit via atexit / SIGTERM / SIGINT /
+SIGHUP handlers registered at import time (main thread only — ``signal.signal``
+is a no-op from Gradio worker threads). Ollama model names auto-detect from
+``localhost:11434`` when unset in ``.env``. See CLAUDE.md → "Notable Quirks".
+"""
 import os
 from typing import Any, List
 from dotenv import load_dotenv

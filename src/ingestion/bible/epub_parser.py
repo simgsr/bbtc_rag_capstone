@@ -1,3 +1,13 @@
+"""Verse-by-verse extractor for copyrighted Bible EPUBs (NIV, ESV).
+
+The public-domain translations (KJV, ASV, YLT) come from Scrollmapper JSON, but
+NIV/ESV are only available as local ``.epub`` files under ``data/bibles/``.
+``BibleEpubParser`` walks an EPUB's HTML documents and yields
+``(book, chapter, verse, text)`` tuples, mapping heading/verse markup back to
+canonical book names (``_canonical_book``). Consumed by ``bible_ingest.py`` to
+populate ``bible_collection``. If an EPUB is missing, ``bible_ingest`` records the
+version as ``skipped`` rather than failing the whole run.
+"""
 import ebooklib
 from ebooklib import epub
 from bs4 import BeautifulSoup

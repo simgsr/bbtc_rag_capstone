@@ -1,3 +1,17 @@
+"""SQLite persistence for structured sermon metadata.
+
+``SermonRegistry`` owns ``data/sermons.db`` and its schema (created idempotently
+on init): the ``sermons`` and ``verses`` tables plus two seeded reference tables,
+``bible_books`` (all 66 canonical books, in order) and ``book_aliases`` (raw
+spelling → canonical). The reference tables are re-seeded on every init so they
+survive ``--wipe`` / re-ingest, and they power the agent's gap/coverage
+anti-join queries (see ``src/tools/sql_tool.py``).
+
+Writes normalise as they land: speakers via ``normalize_speaker`` and book names
+via ``normalize_book`` / ``disambiguate_book``, so downstream aggregations group
+cleanly. Verse inserts are idempotent (``INSERT OR IGNORE`` on
+``(sermon_id, verse_ref)``); sermon upserts use ``ON CONFLICT ... DO UPDATE``.
+"""
 import sqlite3, os
 from src.storage.normalize_speaker import normalize_speaker
 from src.storage.normalize_book import normalize_book, disambiguate_book, BOOK_MAP

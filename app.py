@@ -1,3 +1,26 @@
+"""BBTC Sermon Intelligence — Gradio chat UI + LangGraph ReAct agent.
+
+Application entry point (run with ``python app.py``; serves on 127.0.0.1:7860).
+It wires together:
+
+  * A LangGraph ReAct agent (``create_react_agent``) backed by a runtime-
+    selectable chat LLM — MLX (Apple Silicon), Ollama, Groq, or Gemini — chosen
+    via the "Inference Engine" dropdown. LLM construction lives in ``src/llm.py``.
+  * Five agent tools: SQL over ``data/sermons.db`` (``make_sql_tool``), semantic
+    sermon search + Bible search / translation lookup over ChromaDB
+    (``make_vector_tool`` / ``make_bible_tool``), and Plotly charts
+    (``make_viz_tool``).
+  * A Gradio Blocks UI (chat, engine picker, quick-query pills, live archive
+    stats) defined at the bottom of this file (``with gr.Blocks() as demo``).
+
+Caching: agents/LLMs are cached per provider in ``_agent_cache`` / ``_llm_cache``,
+except MLX which is rebuilt per call (see ``respond`` and CLAUDE.md → "Notable
+Quirks" for the httpx "client closed" workaround). The Ollama backend can spawn
+and reap a local ``ollama serve`` (``_ensure_ollama`` / ``_shutdown_ollama``);
+the MLX ``mlx_lm.server`` is managed in ``src/llm.py``.
+
+See CLAUDE.md → "Architecture" for the end-to-end data flow.
+"""
 import warnings
 from langgraph.warnings import LangGraphDeprecatedSinceV10
 warnings.filterwarnings("ignore", category=LangGraphDeprecatedSinceV10)
@@ -24,6 +47,11 @@ load_dotenv()
 # Ensure Plotly uses light template for consistency
 pio.templates.default = "plotly_white"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Ollama subprocess lifecycle
+# Spawn/reap a local `ollama serve` ONLY if we started it (never touches a
+# pre-existing system daemon). Cleanup mirrors the MLX handling in src/llm.py.
+# ─────────────────────────────────────────────────────────────────────────────
 _ollama_proc = None  # only set if we spawn `ollama serve` ourselves
 
 
@@ -371,6 +399,12 @@ def _build_meta_footer(tools_used: list, token_info: dict, provider: str = "", e
     )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Chat handler — the Gradio callback that runs one turn through the agent.
+# Parses the engine selection, builds/loads the agent, passes the last 3
+# exchanges of history, invokes the ReAct agent, and retries on the MLX
+# "client has been closed" error (see CLAUDE.md → "Notable Quirks").
+# ─────────────────────────────────────────────────────────────────────────────
 def respond(message, history, selection="ollama_local"):
     if not _init_ok or get_agent is None:
         return "⚠️ Agent not initialized. Check that Ollama is running.", [], {}, 0.0
@@ -846,6 +880,10 @@ function() {
 }
 """
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Gradio UI layout — header + stats bar, chat column, and the sidebar (engine
+# picker, quick-query pills). Event wiring is at the bottom of the block.
+# ─────────────────────────────────────────────────────────────────────────────
 with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
     with gr.Row(elem_id="header"):
         with gr.Column(scale=4):

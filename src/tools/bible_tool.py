@@ -1,3 +1,16 @@
+"""Agent tools: Bible lookup + search over ``bible_collection``.
+
+``make_bible_tool(vector_store)`` returns two tools:
+
+  * ``get_bible_versions_tool(reference)`` — returns every stored translation
+    (NIV, ESV, ASV, KJV, YLT) of one verse, for translation-audit / version
+    comparison. The reference is canonicalised via ``normalize_book`` so
+    ``1 john 1:9`` and ``1 John 1:9`` resolve to the same stored key.
+  * ``search_bible_tool(query, k)`` — BGE-M3 semantic search for passages about a
+    theme ("forgiveness", "walking by faith").
+
+Verse-reference parsing lives in ``_normalize_ref`` (``Book Chapter:Verse[-Verse]``).
+"""
 import re
 from langchain_core.tools import tool
 from src.storage.chroma_store import SermonVectorStore

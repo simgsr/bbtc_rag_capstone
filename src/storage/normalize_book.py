@@ -1,3 +1,16 @@
+"""Canonical Bible-book name normalisation (the 66-book Protestant canon).
+
+Sermon PS filenames and NG bodies spell book names inconsistently (``Ps``,
+``Psalm``, ``Psalms``; ``Song of Solomon`` vs ``Song of Songs``; ``1sam`` vs
+``1 Samuel``). ``normalize_book(raw)`` maps any known variant to its canonical
+form (or ``None`` for garbage), so verses stored in SQLite/Chroma group cleanly.
+
+Unnumbered ambiguous names (``Samuel``, ``Kings``, ``Corinthians``, ...) can't be
+resolved by name alone; ``disambiguate_book(raw, chapter)`` uses the chapter
+number against each book's max chapter to pick 1st vs 2nd (defaulting to the
+first book when still ambiguous). This module is the single source of truth for
+book names — ``sqlite_store`` and the Bible tools both import from here.
+"""
 BOOK_MAP: dict[str, str] = {
     # ── Old Testament ─────────────────────────────────────────────────────────
     "genesis": "Genesis", "gen": "Genesis",

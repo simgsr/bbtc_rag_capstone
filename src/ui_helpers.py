@@ -1,4 +1,13 @@
+"""Pure helper functions for the Gradio UI (``app.py``).
 
+Kept separate from ``app.py`` so they can be unit-tested without importing the
+whole app / Gradio (see ``tests/test_ui_helpers.py``):
+
+  * ``extract_chart_path`` — pull a ``viz_tool`` chart file path out of the
+    agent's reply text and return the cleaned message + path.
+  * ``fetch_archive_stats`` / ``render_stats_bar`` — read live sermon/speaker/
+    year/language counts from SQLite and render the header stats pill bar.
+"""
 import re
 import sqlite3
 

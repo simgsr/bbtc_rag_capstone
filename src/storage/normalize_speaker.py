@@ -1,3 +1,15 @@
+"""Canonical speaker-name normalisation for BBTC preachers.
+
+The same preacher appears under many surface forms across NG fields and
+filenames — titles (``Pastor``/``Ps``/``SP``/``DSP``/``Elder``), abbreviations
+(``Dan`` vs ``Daniel``), and honorific drift over time. ``normalize_speaker(raw)``
+collapses these to one canonical label (e.g. every variant of the senior pastor →
+``SP Daniel Foo``) via ``SPEAKER_MAP`` plus light heuristic fallbacks, so
+``GROUP BY speaker`` and speaker charts don't fragment one person into many.
+
+Used at write time by ``sqlite_store`` / ``ng_extractor`` and by the
+filename-based speaker fallbacks in ``src/ingestion``.
+"""
 import re
 
 # Canonical mapping: raw name (any casing) → canonical name.

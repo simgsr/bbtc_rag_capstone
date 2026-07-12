@@ -377,6 +377,20 @@ make test
 
 ---
 
+## Maintaining & Contributing
+
+Taking over or extending the project? Start with:
+
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — dev setup, everyday commands, testing,
+  the embeddings "golden rule", and operational gotchas (orphan model servers, etc.).
+- **[CLAUDE.md](CLAUDE.md)** — authoritative architecture, component map, DB
+  schema, and notable quirks.
+- **[docs/](docs/README.md)** — design notes and implementation plans.
+
+Every source module carries a module docstring describing its role — the fastest
+way to orient in an unfamiliar file. The test suite (`python -m pytest`, ~1.5s,
+no external services) must stay green for any change.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
