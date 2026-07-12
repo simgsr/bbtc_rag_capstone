@@ -126,7 +126,7 @@ Gradio UI
 
 ### Agent Tools
 
-- **`sql_query_tool`** — SQL against `data/sermons.db`; use for counts, lists, verse aggregations
+- **`sql_query_tool`** — SQL against `data/sermons.db`; use for counts, lists, verse aggregations, and **gap/coverage analysis** ("books never preached") via an anti-join against the `bible_books` reference table (`... WHERE book_name NOT IN (SELECT DISTINCT book FROM verses)`) — the tool docstring documents `bible_books`/`book_aliases` and steers the model to anti-join rather than recall the 66-book list. Returns up to **200** rows; when a result hits exactly 200 the tool appends a truncation notice so the model doesn't silently reason over a partial set
 - **`search_sermons_tool`** — BGE-M3 semantic search over `sermon_collection`; use for content queries
 - **`viz_tool`** — Plotly interactive charts: `sermons_per_speaker`, `sermons_per_year`, `verses_per_book`, `sermons_scatter`; accepts optional `top_n: int` (default 15) to control how many results are shown in ranked charts (`sermons_per_speaker`, `verses_per_book`)
 - **`get_bible_versions_tool`** — Returns all stored translations (NIV, ESV, KJV, ASV, YLT) of a specific verse from `bible_collection`; use for Translation Audit / version comparison
@@ -166,6 +166,18 @@ bible_versions(
   filename     TEXT,              -- scrollmapper/{id}.json or data/bibles/*.epub
   status       TEXT,              -- "indexed"
   date_indexed TEXT               -- ISO timestamp
+)
+
+-- Reference tables seeded on every SermonRegistry init (survive --wipe / re-ingest)
+bible_books(
+  book_name  TEXT PRIMARY KEY,    -- canonical 66-book name, e.g. "1 Samuel"
+  testament  TEXT,                -- "OT" | "NT"
+  book_order INTEGER              -- 1–66 (canonical order)
+)                                 -- powers gap/coverage anti-joins in sql_query_tool
+
+book_aliases(
+  alias     TEXT PRIMARY KEY,     -- lowercase variant, e.g. "1sam", "gen"
+  canonical TEXT                  -- FK → bible_books.book_name
 )
 ```
 

@@ -74,7 +74,7 @@ The pipeline pairs these by date proximity and topic overlap before ingestion.
 
 | Tool | When the agent uses it |
 |---|---|
-| `sql_query_tool` | Counts, lists, date ranges, speaker stats, verse aggregations |
+| `sql_query_tool` | Counts, lists, date ranges, speaker stats, verse aggregations, and gap/coverage analysis (anti-join against `bible_books`). Returns up to 200 rows |
 | `search_sermons_tool` | "What did the church teach about X?" — semantic content search |
 | `viz_tool` | "Show me a chart of…" — live Plotly charts from SQLite |
 | `get_bible_versions_tool` | "How do different translations render Luke 9:23?" |

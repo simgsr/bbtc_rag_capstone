@@ -12,6 +12,8 @@ def make_sql_tool(db_path: str):
         - sermons(sermon_id, date, year, language, speaker, topic, theme,
                   summary, key_verse, ng_file, ps_file, status)
         - verses(id, sermon_id, verse_ref, book, chapter, verse_start, verse_end, is_key_verse)
+        - bible_books(book_name, testament, book_order)  -- reference: all 66 canonical books (OT/NT), in canonical order
+        - book_aliases(alias, canonical)                 -- reference: maps raw book spellings to canonical book_name
 
         Common queries:
         - List speakers: SELECT DISTINCT speaker FROM sermons WHERE speaker IS NOT NULL ORDER BY speaker
@@ -19,13 +21,19 @@ def make_sql_tool(db_path: str):
         - Most preached book: SELECT book, COUNT(*) as n FROM verses GROUP BY book ORDER BY n DESC LIMIT 10
         - Verses by speaker: SELECT v.verse_ref, COUNT(*) as n FROM verses v JOIN sermons s USING(sermon_id) WHERE s.speaker LIKE '%Chua%' GROUP BY v.verse_ref ORDER BY n DESC
         - Key verses: SELECT key_verse, speaker, date FROM sermons WHERE key_verse IS NOT NULL ORDER BY date DESC
+        - Gap analysis (books NEVER preached): SELECT book_name FROM bible_books WHERE book_name NOT IN (SELECT DISTINCT book FROM verses) ORDER BY book_order
+        - Coverage by testament: SELECT b.testament, COUNT(DISTINCT v.book) as preached, COUNT(DISTINCT b.book_name) as total FROM bible_books b LEFT JOIN verses v ON b.book_name=v.book GROUP BY b.testament
 
-        Returns up to 50 rows."""
+        For "which X are missing / never used / not covered" questions, use an anti-join
+        against the reference table (bible_books) with NOT IN / LEFT JOIN — do NOT try to
+        recall the full 66-book list yourself.
+
+        Returns up to 200 rows."""
         try:
             with sqlite3.connect(db_path) as conn:
                 cursor = conn.execute(query)
                 columns = [d[0] for d in cursor.description]
-                rows = cursor.fetchmany(50)
+                rows = cursor.fetchmany(200)
                 if not rows:
                     # Fallback logic for speaker suggestions
                     import re
@@ -50,6 +58,11 @@ def make_sql_tool(db_path: str):
                 result = "Columns: " + ", ".join(columns) + "\n"
                 for row in rows:
                     result += str(row) + "\n"
+                if len(rows) == 200:
+                    result += (
+                        "[Note: results truncated at 200 rows — the full result set may be "
+                        "larger. Use COUNT/GROUP BY or add filters for complete data.]\n"
+                    )
                 return result
         except Exception as e:
             return (
