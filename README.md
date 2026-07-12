@@ -211,6 +211,7 @@ cp .env.example .env
 | `MLX_SERVER_HOST` / `MLX_SERVER_PORT` | `127.0.0.1` / `8081` | Host/port for the local `mlx_lm.server` subprocess |
 | `MLX_PROMPT_CACHE_SLOTS` | `4` | KV-cache slots — reuses system prompt + tool schemas across ReAct calls |
 | `MLX_PROMPT_CACHE_BYTES` | `8000000000` | KV-cache budget in bytes (8 GB) |
+| `MLX_SERVER_STARTUP_TIMEOUT` | `1200` | Seconds to wait for `mlx_lm.server` to load a model before erroring — raise for large/first-time weights (e.g. the 80B, ~85 GB) |
 | `INGEST_PROVIDER` | `mlx` | Ingest LLM backend: `mlx` \| `ollama_local` \| `groq` \| `gemini` |
 | `MLX_INGEST_MODEL` | `mlx-community/Qwen3-4B-4bit` | MLX ingest model; auto-downloaded on first run |
 | `OLLAMA_INGEST_MODEL` | `gemma4:latest` | Only used when `INGEST_PROVIDER=ollama_local` |

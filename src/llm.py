@@ -126,16 +126,31 @@ def _ensure_mlx_server(model: str, host: str = MLX_SERVER_HOST, port: int = MLX_
         stdout=None, stderr=None,  # route to parent terminal for debugging
     )
 
-    deadline = time.time() + 180
+    # Loading a large model can take minutes; a first-run download of an ~85 GB
+    # repo (e.g. Qwen3-Next-80B) can take far longer. Default to a generous 20 min
+    # so a big-model switch never times out mid-load; override via MLX_SERVER_STARTUP_TIMEOUT.
+    startup_timeout = int(os.getenv("MLX_SERVER_STARTUP_TIMEOUT", "1200"))
+    deadline = time.time() + startup_timeout
     while time.time() < deadline:
         if _ping():
             _mlx_server_model = model
             print("🍎 mlx_lm.server ready", flush=True)
             return base_url
         if _mlx_server_proc.poll() is not None:
-            raise RuntimeError("mlx_lm.server exited before becoming ready")
+            returncode = _mlx_server_proc.returncode
+            _mlx_server_proc = None
+            raise RuntimeError(
+                f"mlx_lm.server exited (code {returncode}) "
+                f"before becoming ready while loading '{model}'. Check the terminal log above — "
+                "common causes: model repo not downloaded/unavailable, out of memory, or unsupported "
+                "architecture (needs a newer mlx-lm)."
+            )
         time.sleep(1)
-    raise TimeoutError("mlx_lm.server did not become ready within 180s")
+    raise TimeoutError(
+        f"mlx_lm.server did not become ready within {startup_timeout}s while loading '{model}'. "
+        "If this is a first-time load, the weights may still be downloading — raise "
+        "MLX_SERVER_STARTUP_TIMEOUT or pre-download with: hf download " + model
+    )
 
 
 class MLXChatModel(BaseChatModel):
