@@ -33,7 +33,10 @@ Required Ollama models:
 - `ollama_local`: uses `OLLAMA_INGEST_MODEL` (default `gemma4:latest`); causes Ollama model-swap with BGE-M3 — slower
 - `groq` / `gemini`: cloud fallbacks — set `GROQ_API_KEY` or `GOOGLE_API_KEY`
 
-**Embeddings** — BGE-M3 via `sentence-transformers` on MPS (Apple Silicon GPU). No Ollama required for embeddings. Model auto-downloads from HuggingFace on first run.
+**Embeddings** — selected via `EMBED_BACKEND` in `.env` (default `st`). No Ollama required. Model auto-downloads from HuggingFace on first run. Switching backends changes the vector space (and possibly the dimension) — you must wipe + re-ingest both collections (`ingest.py --wipe` and `bible_ingest.py --wipe`) so stored and query vectors match.
+- `st` (default): BAAI/bge-m3 via `sentence-transformers` on MPS (fp32), 1024-dim
+- `mlx_bge`: `mlx-community/bge-m3-mlx-fp16` via `mlx-embeddings` (Apple Silicon), 1024-dim — ~2x faster than `st`, ~3 GB RAM; drop-in (same dim/quality)
+- `mlx_qwen`: `mlx-community/Qwen3-Embedding-8B-4bit-DWQ`, 4096-dim — higher MTEB but ~5x slower on ingest and 4x storage; overkill for this corpus. `MLX_EMBED_MODEL` overrides the repo, `MLX_EMBED_MAX_LEN` the token cap (default 1024) for `mlx_*` backends.
 
 ## Running the Application
 
@@ -196,5 +199,5 @@ bible_versions(
 - ReAct agent reuses ~3,238 tokens of system prompt + tool schemas per LLM call. For MLX, `--prompt-cache-size 4 --prompt-cache-bytes 8000000000` is passed to `mlx_lm.server` so the static preamble is only prefilled once — second/third calls are ~70-80% faster (5s → 1s in benchmarks).
 - Chat history window: `app.py:respond()` passes the last 6 history entries (3 user + 3 assistant exchanges) to the agent. Bump the slice if you need longer memory.
 - `OLLAMA_CHAT_MODEL` and `OLLAMA_INGEST_MODEL` are auto-detected via `_auto_detect_ollama_model()` in `src/llm.py`: if not set in `.env`, it queries `localhost:11434/api/tags` and picks the first available model, raising `RuntimeError` if none are found.
-- BGE-M3 embedding init in `SermonVectorStore` is lazy — deferred to first `_upsert_in_batches` or `_search` call, so importing the class does not require Ollama to be running.
+- Embedding init in `SermonVectorStore` is lazy — deferred to first `_upsert_in_batches` or `_search` call (reads `EMBED_BACKEND` then), so importing the class does not require the model (or Ollama) to be loaded. MLX backends go through the `_MLXEmbedder` adapter, which wraps `mlx_embeddings.generate` behind a `sentence-transformers`-style `.encode()` returning an `mx.array` (`.tolist()`-compatible with the existing `_embed`).
 - `bible_ingest.py` treats `status="skipped"` as equivalent to `"indexed"` in `_is_indexed()`, so missing EPUB files are not retried on every run.

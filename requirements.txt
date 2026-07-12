@@ -19,4 +19,5 @@ langgraph
 ebooklib
 plotly
 mlx-lm
+mlx-embeddings          # optional: EMBED_BACKEND=mlx_bge / mlx_qwen (Apple Silicon)
 sentence-transformers
