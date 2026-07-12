@@ -42,12 +42,14 @@ MLX_MAX_TOKENS = int(os.getenv("MLX_MAX_TOKENS", "4096"))
 INGEST_PROVIDER = os.getenv("INGEST_PROVIDER", "ollama_local")
 
 _mlx_server_proc = None
+_mlx_server_model = None  # model currently served by our mlx_lm.server subprocess
 
 
 def _shutdown_mlx_server() -> None:
     """Terminate the mlx_lm.server subprocess if this process started it."""
-    global _mlx_server_proc
+    global _mlx_server_proc, _mlx_server_model
     if _mlx_server_proc is None or _mlx_server_proc.poll() is not None:
+        _mlx_server_model = None
         return
     print("🍎 Shutting down mlx_lm.server ...", flush=True)
     _mlx_server_proc.terminate()
@@ -56,6 +58,7 @@ def _shutdown_mlx_server() -> None:
     except Exception:
         _mlx_server_proc.kill()
     _mlx_server_proc = None
+    _mlx_server_model = None
 
 
 def _register_mlx_cleanup() -> None:
@@ -83,8 +86,9 @@ _register_mlx_cleanup()
 
 
 def _ensure_mlx_server(model: str, host: str = MLX_SERVER_HOST, port: int = MLX_SERVER_PORT) -> str:
-    """Start mlx_lm.server on `port` if not already running. Returns OpenAI base_url."""
-    global _mlx_server_proc
+    """Start mlx_lm.server on `port` if not already running (or restart it if a
+    different model is requested — one server serves one model). Returns OpenAI base_url."""
+    global _mlx_server_proc, _mlx_server_model
     import subprocess, sys, time, urllib.request
     base_url = f"http://{host}:{port}/v1"
 
@@ -96,7 +100,16 @@ def _ensure_mlx_server(model: str, host: str = MLX_SERVER_HOST, port: int = MLX_
             return False
 
     if _ping():
-        return base_url
+        # Reuse only if our server is already serving the requested model.
+        if _mlx_server_model == model:
+            return base_url
+        if _mlx_server_proc is not None:
+            print(f"🍎 Switching MLX model: {_mlx_server_model} → {model} (restarting server) ...", flush=True)
+            _shutdown_mlx_server()
+        else:
+            # A server we didn't spawn is up; assume it serves `model` and use it as-is.
+            _mlx_server_model = model
+            return base_url
 
     if _mlx_server_proc is not None and _mlx_server_proc.poll() is not None:
         _mlx_server_proc = None
@@ -116,6 +129,7 @@ def _ensure_mlx_server(model: str, host: str = MLX_SERVER_HOST, port: int = MLX_
     deadline = time.time() + 180
     while time.time() < deadline:
         if _ping():
+            _mlx_server_model = model
             print("🍎 mlx_lm.server ready", flush=True)
             return base_url
         if _mlx_server_proc.poll() is not None:
@@ -193,13 +207,15 @@ def get_ingest_llm():
     return get_llm(provider=INGEST_PROVIDER, model=OLLAMA_INGEST_MODEL)
 
 
-def get_chat_llm(provider: str = "ollama_local", temperature: float = 0.1):
-    """Returns the chat-agent LLM. For provider='mlx', spins up mlx_lm.server and connects via ChatOpenAI (which supports tool calling)."""
+def get_chat_llm(provider: str = "ollama_local", temperature: float = 0.1, model: str | None = None):
+    """Returns the chat-agent LLM. For provider='mlx', spins up mlx_lm.server (restarting it
+    if `model` differs from the one currently served) and connects via ChatOpenAI (tool-calling)."""
     if provider == "mlx":
         from langchain_openai import ChatOpenAI
-        base_url = _ensure_mlx_server(MLX_CHAT_MODEL)
+        mlx_model = model or MLX_CHAT_MODEL
+        base_url = _ensure_mlx_server(mlx_model)
         return ChatOpenAI(
-            model=MLX_CHAT_MODEL,
+            model=mlx_model,
             temperature=temperature,
             base_url=base_url,
             api_key="not-needed",
