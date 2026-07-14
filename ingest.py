@@ -127,6 +127,11 @@ def process_group(group, registry: SermonRegistry, vector_store: SermonVectorSto
     for src in [topic, ng_body]:
         if not src:
             continue
+        # Strip the speaker's own name tokens so e.g. "Daniel Foo" isn't parsed as
+        # the book of Daniel. A real citation keeps its chapter number (e.g.
+        # "Mark 3:16"), so only strip a name token when no digit follows it.
+        for tok in re.findall(r'[A-Za-z]{3,}', speaker or ""):
+            src = re.sub(rf'\b{re.escape(tok)}\b(?!\s*\d)', ' ', src, flags=re.IGNORECASE)
         for v in parse_verses_from_text(src):
             norm = v["verse_ref"].lower().replace(" ", "")
             if norm not in existing_refs:
@@ -160,6 +165,11 @@ def process_group(group, registry: SermonRegistry, vector_store: SermonVectorSto
                     "is_key_verse": 0,
                 })
                 existing_refs.add(norm_ref)
+
+    # Drop book-only references (no chapter): a bare book name is too unreliable
+    # to store as a preached verse — it collides with speaker names and common
+    # words. Keep only refs with an actual chapter number.
+    all_verses = [v for v in all_verses if v.get("chapter")]
 
     # If we found verses but none are marked as key, mark the first one
     if all_verses and not any(v.get("is_key_verse") for v in all_verses):

@@ -1,4 +1,4 @@
-from src.ingestion.ps_extractor import parse_verses_from_filename, normalize_verse_ref
+from src.ingestion.ps_extractor import parse_verses_from_filename, parse_verses_from_text, normalize_verse_ref
 
 
 def test_luke_chapter_verse():
@@ -35,6 +35,18 @@ def test_verse_range():
 def test_no_verse_returns_empty():
     verses = parse_verses_from_filename("English_2024_Some-Sermon-Without-Verse-compressed.pdf")
     assert verses == []
+
+
+def test_bare_word_song_is_not_a_verse():
+    # The English word "song" must not be parsed as the book of Song of Songs.
+    assert parse_verses_from_text("Song For Dark Times") == []
+    assert parse_verses_from_filename("English_2022_Song-for-Happy-Times_pCSL.pdf") == []
+
+
+def test_full_song_of_songs_phrase_matches():
+    for text in ("Song of Songs 2:4", "Song of Solomon 8:6-7", "song-of-songs-2v4"):
+        v = parse_verses_from_text(text)
+        assert v and v[0]["book"] == "Song of Songs", text
 
 
 def test_normalize_verse_ref_basic():

@@ -1,3 +1,17 @@
+"""Agent tool: raw SQL over the sermon database (``data/sermons.db``).
+
+``make_sql_tool(db_path)`` returns ``sql_query_tool``, the agent's structured-
+query tool — used for counts, lists, date ranges, speaker stats, verse
+aggregations, and gap/coverage analysis (anti-join against the ``bible_books``
+reference table). The tool's docstring is the schema/example contract the LLM
+reads, so keep it accurate: it documents every table (including ``bible_books`` /
+``book_aliases``) and steers the model to anti-join rather than recall the
+66-book canon from memory.
+
+Results are capped at 200 rows; when a result hits exactly 200 the tool appends
+an explicit truncation notice so the model never silently reasons over a partial
+set. Errors return the schema so the model can self-correct and retry.
+"""
 import sqlite3
 from langchain_core.tools import tool
 

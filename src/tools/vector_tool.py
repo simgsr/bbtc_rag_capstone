@@ -1,3 +1,12 @@
+"""Agent tool: semantic search over sermon content (``sermon_collection``).
+
+``make_vector_tool(vector_store)`` returns ``search_sermons_tool`` — BGE-M3
+similarity search over NG body chunks and LLM summaries, used for content
+questions ("what did the pastor say about X?"). It supports optional metadata
+filters (exact/`min`/`max` year, partial speaker) translated to Chroma ``where``
+clauses, and de-duplicates hits so multiple excerpts from one sermon are merged
+under a single header. Returns formatted excerpts, not raw rows.
+"""
 from langchain_core.tools import tool
 from src.storage.chroma_store import SermonVectorStore
 

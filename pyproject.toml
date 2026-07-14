@@ -1,0 +1,22 @@
+# Project metadata and tooling configuration.
+# Dependencies are managed in requirements.txt (the single source of truth for
+# installs); this file provides metadata and test/tool configuration only.
+
+[project]
+name = "bbtc-sermon-intelligence"
+version = "1.0.0"
+description = "Hybrid agentic RAG pipeline over the BBTC sermon archive (scrape → ingest → SQLite + ChromaDB → LangGraph ReAct agent + Gradio UI)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+
+[tool.pytest.ini_options]
+# `python -m pytest` from the repo root runs the full suite (no external
+# services required — the unit tests are hermetic).
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+    # Silence third-party deprecation noise so real warnings stand out.
+    "ignore::DeprecationWarning:chromadb.*",
+    "ignore:builtin type.*has no __module__ attribute:DeprecationWarning",
+]

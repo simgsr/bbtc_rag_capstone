@@ -1,4 +1,15 @@
-# src/scraper/bbtc_scraper.py
+"""Scraper for the BBTC sermon archive website.
+
+``BBTCScraper.scrape_year(year, lang)`` walks a year's archive page, and for each
+linked document classifies it BEFORE downloading (``classify_file``) so handouts
+are skipped and only sermon Notes/Guide (NG) and Slides (PS) files land in
+``data/staging/``. Uses ``cloudscraper`` to get past Cloudflare, and PyMuPDF /
+python-docx / python-pptx to sniff text for classification.
+
+This is the first stage of the pipeline (website → staging); ``ingest.py`` then
+classifies, groups, extracts, summarises and embeds those staged files.
+Run standalone with ``python src/scraper/bbtc_scraper.py <year>``.
+"""
 import os
 import sys
 from pathlib import Path

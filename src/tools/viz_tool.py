@@ -1,3 +1,13 @@
+"""Agent tool: interactive Plotly charts from the sermon database.
+
+``make_viz_tool(registry)`` returns ``viz_tool``, which renders one of four
+chart types — ``sermons_per_speaker``, ``sermons_per_year``, ``verses_per_book``,
+``sermons_scatter`` — by querying ``data/sermons.db`` and writing a Plotly figure
+to a temp ``.json`` file. ``app.py`` (via ``ui_helpers.extract_chart_path``) picks
+that path out of the agent's reply and renders it in the UI. Ranked charts accept
+an optional ``top_n`` (default 15). The module-level ``_*`` constants and
+``_base_layout`` define the shared visual theme.
+"""
 import plotly.express as px
 import plotly.graph_objects as go
 import plotly.io as pio

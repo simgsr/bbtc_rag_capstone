@@ -1,4 +1,18 @@
-# src/storage/chroma_store.py
+"""ChromaDB vector store for sermon chunks and Bible verses.
+
+``SermonVectorStore`` wraps a persistent ChromaDB client holding two
+collections — ``sermon_collection`` (NG body chunks + LLM summaries) and
+``bible_collection`` (per-verse text across translations) — and provides the
+upsert + semantic-search methods used by the ingest pipeline and the agent's
+vector/bible tools.
+
+Embeddings are computed here (not by Chroma) so all documents and queries share
+one backend, selected via ``EMBED_BACKEND`` (``st`` | ``mlx_bge`` | ``mlx_qwen``;
+see the constants below). Init is LAZY — the model is only loaded on the first
+upsert/search — so importing this module never forces a model load. Switching
+backend changes the vector space and requires a wipe + re-ingest of BOTH
+collections so stored and query vectors remain comparable.
+"""
 import chromadb
 import os
 

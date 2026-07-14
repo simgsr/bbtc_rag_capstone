@@ -27,7 +27,7 @@ The LangGraph ReAct agent decides in real time which tool to invoke — SQL for 
 
 | Layer | Technology |
 |---|---|
-| **Chat LLM** | Picked at runtime via "Inference Engine" radio: MLX Qwen3-30B-A3B (default, local, via `mlx_lm.server` + OpenAI-compat API; swappable to Qwen3-Next-80B on 128 GB machines) · Ollama (local) · Groq · Gemini |
+| **Chat LLM** | Picked at runtime via the "Inference Engine" dropdown: `qwen3.6:35b-mlx` (Ollama, local, default) · `qwen3.5:122b` · `gpt-oss:120b` · Gemini 2.5 Flash / Pro (cloud) · Groq (cloud) |
 | **Ingest LLM** | Apple MLX (`Qwen3-4B-4bit`) on Neural Engine — default; Ollama / Groq / Gemini configurable |
 | **Embeddings** | BGE-M3 (multilingual) — `sentence-transformers` on MPS by default, or native MLX (`bge-m3` / `Qwen3-Embedding`) via `EMBED_BACKEND` |
 | **Vector store** | ChromaDB |
@@ -108,18 +108,21 @@ The pipeline pairs these by date proximity and topic overlap before ingestion.
 - [Ollama](https://ollama.ai) running locally (`ollama serve`) — **for the chat UI only**
 - Make (pre-installed on macOS)
 
-Pull the chat model before running (embeddings no longer need Ollama):
+Pull the default chat model before running (embeddings no longer need Ollama):
 
 ```bash
-ollama pull gemma4:latest    # chat LLM — ~9.6 GB (see .env.example for smaller alternatives)
+ollama pull qwen3.6:35b-mlx    # default chat LLM — ~21 GB
+# optional heavier engines offered in the dropdown:
+# ollama pull qwen3.5:122b-a10b-q4_K_M   # ~81 GB (deep)
+# ollama pull gpt-oss:120b               # ~65 GB (RAG Q&A)
 ```
 
 > **Hardware guide** — see `.env.example` for model recommendations based on available RAM (8 GB → 96 GB+).
 
-**Ingest, chat, and embeddings can all run fully on Apple Silicon without Ollama:**
+**Ingest and embeddings run fully on Apple Silicon without Ollama; the chat agent runs on Ollama (local) or a cloud backend:**
 
 - **Ingest LLM** — [mlx-lm](https://github.com/ml-explore/mlx-lm) runs `Qwen3-4B-4bit` on the Neural Engine. The model (~2.5 GB) is downloaded from HuggingFace automatically on first run.
-- **Chat LLM (MLX, default)** — `Qwen3-30B-A3B-Instruct-2507-4bit [mlx]` is the default in the "Inference Engine" radio. The app boots `mlx_lm.server` (OpenAI-compatible API) at startup and connects via `ChatOpenAI` for full tool-calling. Model is ~17 GB MoE (3B active params); auto-downloads on first selection. The server is shut down with the app via `atexit` + `SIGINT` / `SIGTERM` / `SIGHUP` handlers. If you also use Ollama and the app spawned `ollama serve` itself, it's tracked and cleaned up the same way (a pre-existing system Ollama daemon is left alone).
+- **Chat LLM (Ollama, default)** — the "Inference Engine" dropdown defaults to `qwen3.6:35b-mlx` served by Ollama; it also offers `qwen3.5:122b` and `gpt-oss:120b` (local), plus Gemini 2.5 Flash / Pro and Groq (cloud, key-gated). Each dropdown entry carries its own model, and agents are cached per `(provider, model)` so switching engines is instant after the first load.
 - **Embeddings** — `sentence-transformers` runs BGE-M3 on MPS (Apple Silicon GPU). The model (~570 MB) is downloaded from HuggingFace automatically on first run.
 
 Both are installed via `requirements.txt` — no extra steps needed.
@@ -205,9 +208,9 @@ cp .env.example .env
 
 | Variable | Default | Description |
 |---|---|---|
-| `OLLAMA_CHAT_MODEL` | `gemma4:latest` | LLM for the Gradio chat agent (Ollama backend) |
+| `OLLAMA_CHAT_MODEL` | `gemma4:latest` | Fallback Ollama chat model. The "Inference Engine" dropdown ships explicit per-entry models (`_LLM_OPTIONS` in `app.py`), so this is only used as a default when no model is supplied |
 | `OLLAMA_NUM_CTX` | `32768` | Ollama context window (default 2048 is too small for ReAct + history) |
-| `MLX_CHAT_MODEL` | `mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit` | MLX chat model, served via `mlx_lm.server`; auto-downloaded on first selection. One model is served at a time — set to `mlx-community/Qwen3-Next-80B-A3B-Instruct-8bit` (~85 GB, needs 128 GB RAM) for the highest-quality option. See `.env.example` for the full RAM tier list. |
+| `MLX_CHAT_MODEL` | `mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit` | MLX chat model for the latent `mlx_lm.server` chat backend. **Not** listed in the current "Inference Engine" dropdown (chat runs on Ollama/cloud); the `MLX_*` server vars below only apply if that backend is invoked directly. |
 | `MLX_SERVER_HOST` / `MLX_SERVER_PORT` | `127.0.0.1` / `8081` | Host/port for the local `mlx_lm.server` subprocess |
 | `MLX_PROMPT_CACHE_SLOTS` | `4` | KV-cache slots — reuses system prompt + tool schemas across ReAct calls |
 | `MLX_PROMPT_CACHE_BYTES` | `8000000000` | KV-cache budget in bytes (8 GB) |
@@ -371,11 +374,25 @@ make test
 
 - **Classify-before-download**: The scraper classifies filenames against a regex before downloading, so handout PDFs are never fetched.
 - **~50% image-based PDFs**: Many PS slide files have no extractable text — verse extraction relies entirely on filename regex parsing.
-- **Fully local by default**: Chat LLM runs on Ollama OR MLX (`mlx_lm.server` for the 30B MoE option). Ingest LLM runs on MLX (Neural Engine) and embeddings run on MPS via `sentence-transformers` — no Ollama needed for ingest or embeddings. Groq/Gemini are optional cloud fallbacks.
+- **Fully local by default**: the chat agent runs on Ollama (default `qwen3.6:35b-mlx`, with `qwen3.5:122b` / `gpt-oss:120b` as heavier options). Ingest LLM runs on MLX (Neural Engine) and embeddings run on MPS via `sentence-transformers` — no Ollama needed for ingest or embeddings. Gemini/Groq are optional cloud fallbacks.
 - **NG labeled fields are reliable from 2022+**: Pre-2022 files fall back to `filename_parser.py` heuristics.
 - **Manifest-based pairing**: The scraper writes `_manifest_*.json` files that record which PDFs came from the same sermon page. The grouper reads these first for exact pairing, then falls back to fuzzy date/topic matching.
 
 ---
+
+## Maintaining & Contributing
+
+Taking over or extending the project? Start with:
+
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — dev setup, everyday commands, testing,
+  the embeddings "golden rule", and operational gotchas (orphan model servers, etc.).
+- **[CLAUDE.md](CLAUDE.md)** — authoritative architecture, component map, DB
+  schema, and notable quirks.
+- **[docs/](docs/README.md)** — design notes and implementation plans.
+
+Every source module carries a module docstring describing its role — the fastest
+way to orient in an unfamiliar file. The test suite (`python -m pytest`, ~1.5s,
+no external services) must stay green for any change.
 
 ## License
 
