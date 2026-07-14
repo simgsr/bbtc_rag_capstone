@@ -256,7 +256,7 @@ def get_chat_llm(provider: str = "ollama_local", temperature: float = 0.1, model
             api_key="not-needed",
             max_tokens=MLX_MAX_TOKENS,
         )
-    return get_llm(provider=provider, temperature=temperature)
+    return get_llm(provider=provider, temperature=temperature, model=model)
 
 
 def get_llm(provider="ollama_local", temperature=0, model=None):

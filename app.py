@@ -31,7 +31,7 @@ import time
 import urllib.request
 from dotenv import load_dotenv
 from src.storage.chroma_store import SermonVectorStore
-from src.llm import get_llm, get_chat_llm, GROQ_MODEL, GEMINI_MODEL, OLLAMA_CHAT_MODEL, MLX_CHAT_MODEL
+from src.llm import get_llm, get_chat_llm, GROQ_MODEL, GEMINI_MODEL, OLLAMA_CHAT_MODEL
 from src.ui_helpers import extract_chart_path, fetch_archive_stats, render_stats_bar
 from src.storage.sqlite_store import SermonRegistry
 from src.tools.sql_tool import make_sql_tool
@@ -121,6 +121,27 @@ def _ensure_ollama(timeout: int = 20) -> bool:
     print("⚠️  Ollama did not start within the timeout.")
     return False
 _ollama_up = _ensure_ollama()
+
+# ── Inference Engine options ─────────────────────────────────────────────────
+# Dropdown label → (provider, model). The label is also the stored dropdown value;
+# `_parse_selection` looks the tuple back up. First entry is the default engine.
+_LLM_OPTIONS = {
+    "qwen3.6:35b [local · fast · default]":  ("ollama", "qwen3.6:35b-mlx"),
+    "qwen3.5:122b [local · deep]":           ("ollama", "qwen3.5:122b-a10b-q4_K_M"),
+    "gpt-oss:120b [local · RAG Q&A]":        ("ollama", "gpt-oss:120b"),
+    "Gemini 2.5 Flash [cloud · fast]":       ("gemini", "gemini-2.5-flash"),
+    "Gemini 2.5 Pro [cloud · best]":         ("gemini", "gemini-2.5-pro"),
+    "Groq [cloud]":                          ("groq",   GROQ_MODEL),
+}
+
+_ENGINE_CHOICES = list(_LLM_OPTIONS.keys())
+_DEFAULT_SELECTION = _ENGINE_CHOICES[0]
+
+
+def _parse_selection(selection: str):
+    """Resolve a dropdown label into (provider, model), falling back to the default."""
+    return _LLM_OPTIONS.get(selection, _LLM_OPTIONS[_DEFAULT_SELECTION])
+
 
 try:
     registry = SermonRegistry()
@@ -260,26 +281,24 @@ try:
 
     def _build_agent(provider: str, model: str = None):
         _llm = get_chat_llm(provider=provider, temperature=0.1, model=model)
-        _llm_cache[provider] = _llm  # strong ref so httpx client isn't GC-closed
+        _llm_cache[(provider, model)] = _llm  # strong ref so httpx client isn't GC-closed
         return create_react_agent(
             _llm,
             tools=[sql_tool, vector_tool, viz_tool, get_bible_versions_tool, search_bible_tool],
             prompt=SystemMessage(content=SYSTEM_PROMPT),
         )
 
-    def get_agent(provider: str = "ollama_local", model: str = None):
-        # MLX path uses mlx_lm.server's OpenAI-compat layer, which can leave the
-        # httpx client in a closed state after some streamed responses. Rebuild
-        # per call — the model stays loaded in mlx_lm.server so the cost is millis
-        # (and it lets the server swap weights when a different MLX model is picked).
-        if provider == "mlx":
-            return _build_agent(provider, model)
-        if provider not in _agent_cache:
-            _agent_cache[provider] = _build_agent(provider, model)
-        return _agent_cache[provider]
+    def get_agent(provider: str = "ollama", model: str = None):
+        # Cached per (provider, model) so distinct engines (e.g. two Ollama models)
+        # don't collide on the same key.
+        key = (provider, model)
+        if key not in _agent_cache:
+            _agent_cache[key] = _build_agent(provider, model)
+        return _agent_cache[key]
 
-    # Pre-warm MLX agent at startup (spawns mlx_lm.server + loads model)
-    get_agent("mlx")
+    # Pre-warm the default engine at startup (Ollama/cloud clients construct lazily,
+    # so this only builds the agent graph — no model weights load here).
+    get_agent(*_parse_selection(_DEFAULT_SELECTION))
     _init_ok = True
 
 except Exception as e:
@@ -297,50 +316,20 @@ _stats_bar_html = (
 
 _ollama_status = "online" if _ollama_up else "offline"
 
-# ── Inference Engine options ─────────────────────────────────────────────────
-# Selectable MLX chat models (the configured default first, then other known repos).
-# Only one MLX model is served at a time; switching restarts mlx_lm.server (see src/llm.py).
-_KNOWN_MLX_MODELS = [
-    "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit",
-    "mlx-community/Qwen3-Next-80B-A3B-Instruct-8bit",
-]
-MLX_CHAT_MODELS = list(dict.fromkeys([MLX_CHAT_MODEL, *_KNOWN_MLX_MODELS]))
-
-# Dropdown choices as (label, value) — value encodes provider (+ MLX model repo).
-_ENGINE_CHOICES = (
-    [(f"{m.split('/')[-1]}  ·  MLX", f"mlx::{m}") for m in MLX_CHAT_MODELS]
-    + [
-        (f"{OLLAMA_CHAT_MODEL}  ·  Ollama", "ollama_local"),
-        ("Groq  ·  Cloud", "groq"),
-        ("Gemini 3 Flash  ·  Cloud", "gemini"),
-    ]
-)
-_DEFAULT_SELECTION = f"mlx::{MLX_CHAT_MODEL}"
-
-
-def _parse_selection(selection: str):
-    """Split a dropdown value into (provider, model). model is None for non-MLX providers."""
-    if selection and selection.startswith("mlx::"):
-        return "mlx", selection.split("::", 1)[1]
-    return selection or "ollama_local", None
-
 
 def _inference_badge_html(selection: str) -> str:
     provider, model = _parse_selection(selection)
     if provider == "groq":
         has_key = bool(os.getenv("GROQ_API_KEY"))
         status = "online" if has_key else "offline"
-        label = f"groq · {GROQ_MODEL}" if has_key else "groq · no key"
+        label = f"{model or GROQ_MODEL} · groq" if has_key else "groq · no key"
     elif provider == "gemini":
         has_key = bool(os.getenv("GOOGLE_API_KEY"))
         status = "online" if has_key else "offline"
-        label = f"gemini · {GEMINI_MODEL}" if has_key else "gemini · no key"
-    elif provider == "mlx":
-        status = "online"
-        label = f"{(model or MLX_CHAT_MODEL).split('/')[-1]} · mlx"
-    else:  # ollama_local
+        label = f"{model or GEMINI_MODEL} · gemini" if has_key else "gemini · no key"
+    else:  # ollama
         status = _ollama_status
-        label = f"{OLLAMA_CHAT_MODEL} · local"
+        label = f"{model or OLLAMA_CHAT_MODEL} · local"
     return (
         "<div style='display:flex;justify-content:space-between;align-items:center;margin-top:8px;'>"
         f"<span style='color:var(--c-text-2);font-family:\"Source Code Pro\",monospace;font-size:0.72rem;'>inference</span>"
@@ -358,10 +347,9 @@ _TOOL_LABELS = {
 }
 
 _PROVIDER_DISPLAY = {
-    "ollama_local": OLLAMA_CHAT_MODEL,
+    "ollama": OLLAMA_CHAT_MODEL,
     "groq": GROQ_MODEL,
     "gemini": GEMINI_MODEL,
-    "mlx": MLX_CHAT_MODEL.split("/")[-1],
 }
 
 
@@ -373,10 +361,7 @@ def _build_meta_footer(tools_used: list, token_info: dict, provider: str = "", e
 
     right_parts = []
     if provider:
-        if provider == "mlx" and model:
-            model_name = model.split("/")[-1]
-        else:
-            model_name = _PROVIDER_DISPLAY.get(provider, provider)
+        model_name = model.split("/")[-1] if model else _PROVIDER_DISPLAY.get(provider, provider)
         right_parts.append(f"LangGraph ReAct · {model_name}")
     if elapsed:
         right_parts.append(f"{elapsed:.1f}s")
@@ -405,7 +390,7 @@ def _build_meta_footer(tools_used: list, token_info: dict, provider: str = "", e
 # exchanges of history, invokes the ReAct agent, and retries on the MLX
 # "client has been closed" error (see CLAUDE.md → "Notable Quirks").
 # ─────────────────────────────────────────────────────────────────────────────
-def respond(message, history, selection="ollama_local"):
+def respond(message, history, selection=_DEFAULT_SELECTION):
     if not _init_ok or get_agent is None:
         return "⚠️ Agent not initialized. Check that Ollama is running.", [], {}, 0.0
 
@@ -446,8 +431,8 @@ def respond(message, history, selection="ollama_local"):
                 last_err = inner
                 if "client has been closed" not in str(inner):
                     raise
-                _agent_cache.pop(provider, None)
-                _llm_cache.pop(provider, None)
+                _agent_cache.pop((provider, model), None)
+                _llm_cache.pop((provider, model), None)
                 agent = get_agent(provider, model)
         if result is None:
             raise last_err
@@ -957,8 +942,8 @@ with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
             gr.HTML(
                 "<p style='margin:6px 2px 0;font-size:0.68rem;line-height:1.45;"
                 "color:var(--c-text-3);font-family:\"Source Code Pro\",monospace;'>"
-                "Switching to a larger MLX model reloads its weights — the first response "
-                "after a switch can take a few minutes.</p>"
+                "Switching to a larger local model reloads its weights in Ollama — the first "
+                "response after a switch can take a little longer.</p>"
             )
             provider_state = gr.State(_DEFAULT_SELECTION)
 
@@ -975,7 +960,7 @@ with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
             clear = gr.Button("Clear Chat", variant="secondary")
 
     def _on_provider_change(selection):
-        # `selection` is the dropdown value (e.g. "mlx::<repo>", "groq"). Store it as-is.
+        # `selection` is the dropdown label (a key of _LLM_OPTIONS). Store it as-is.
         return selection, _inference_badge_html(selection)
 
     provider_dropdown.change(
