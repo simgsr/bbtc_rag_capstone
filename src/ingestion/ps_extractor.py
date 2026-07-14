@@ -22,7 +22,7 @@ _BOOKS = {
     "1chronicles": "1 Chronicles", "2chronicles": "2 Chronicles",
     "ezra": "Ezra", "nehemiah": "Nehemiah", "esther": "Esther", "job": "Job",
     "psalms": "Psalms", "psalm": "Psalms", "proverbs": "Proverbs",
-    "ecclesiastes": "Ecclesiastes", "song": "Song of Songs",
+    "ecclesiastes": "Ecclesiastes",
     "isaiah": "Isaiah", "jeremiah": "Jeremiah", "lamentations": "Lamentations",
     "ezekiel": "Ezekiel", "daniel": "Daniel", "hosea": "Hosea",
     "joel": "Joel", "amos": "Amos", "obadiah": "Obadiah", "jonah": "Jonah",
@@ -60,6 +60,39 @@ _VERSE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Multi-word book names whose first token is a common English word must match the
+# FULL phrase — otherwise the bare word (e.g. "Song" in "Song For Dark Times")
+# produces false-positive references. Groups 1/2/3: chapter/verse_start/verse_end.
+_PHRASE_BOOKS = [
+    (re.compile(
+        r'(?<![A-Za-z])song[-_ ]of[-_ ](?:songs?|solomon)'
+        r'(?:[-_ ](\d{1,3})(?:[:V\-_ ](\d{1,3})(?:-(\d{1,3}))?)?)?'
+        r'(?![A-Za-z])',
+        re.IGNORECASE,
+    ), "Song of Songs"),
+]
+
+
+def _iter_verse_tuples(text: str):
+    """Yield (book, chapter, verse_start, verse_end) matches found in text."""
+    for m in _VERSE_RE.finditer(text):
+        prefix = m.group(1).rstrip('-_ ') if m.group(1) else ""
+        book_raw = m.group(2)
+        book_key = (prefix + book_raw).lower()
+        book = _BOOKS.get(book_key) or _BOOKS.get(book_raw.lower())
+        if not book:
+            continue
+        chapter = int(m.group(3)) if m.group(3) else None
+        if chapter and chapter > 150:
+            continue
+        yield book, chapter, (int(m.group(4)) if m.group(4) else None), (int(m.group(5)) if m.group(5) else None)
+    for pattern, book in _PHRASE_BOOKS:
+        for m in pattern.finditer(text):
+            chapter = int(m.group(1)) if m.group(1) else None
+            if chapter and chapter > 150:
+                continue
+            yield book, chapter, (int(m.group(2)) if m.group(2) else None), (int(m.group(3)) if m.group(3) else None)
+
 
 def _strip_prefix(filename: str) -> str:
     name = os.path.splitext(os.path.basename(filename))[0]
@@ -83,18 +116,7 @@ def parse_verses_from_text(text: str) -> list[dict]:
     """
     seen: set[str] = set()
     results = []
-    for m in _VERSE_RE.finditer(text):
-        prefix = m.group(1).rstrip('-_ ') if m.group(1) else ""
-        book_raw = m.group(2)
-        book_key = (prefix + book_raw).lower()
-        book = _BOOKS.get(book_key) or _BOOKS.get(book_raw.lower())
-        if not book:
-            continue
-        chapter = int(m.group(3)) if m.group(3) else None
-        verse_start = int(m.group(4)) if m.group(4) else None
-        verse_end = int(m.group(5)) if m.group(5) else None
-        if chapter and chapter > 150:
-            continue
+    for book, chapter, verse_start, verse_end in _iter_verse_tuples(text):
         ref = normalize_verse_ref(book, chapter, verse_start, verse_end)
         if ref in seen:
             continue
@@ -121,18 +143,7 @@ def parse_verses_from_filename(filename: str) -> list[dict]:
     core = re.sub(r'[-_]V\d+\b', ' ', core, flags=re.IGNORECASE)
 
     results = []
-    for i, m in enumerate(_VERSE_RE.finditer(core)):
-        prefix = m.group(1).rstrip('-_ ') if m.group(1) else ""
-        book_raw = m.group(2)
-        book_key = (prefix + book_raw).lower()
-        book = _BOOKS.get(book_key) or _BOOKS.get(book_raw.lower())
-        if not book:
-            continue
-        chapter = int(m.group(3)) if m.group(3) else None
-        verse_start = int(m.group(4)) if m.group(4) else None
-        verse_end = int(m.group(5)) if m.group(5) else None
-        if chapter and chapter > 150:
-            continue
+    for i, (book, chapter, verse_start, verse_end) in enumerate(_iter_verse_tuples(core)):
         ref = normalize_verse_ref(book, chapter, verse_start, verse_end)
         results.append({
             "verse_ref": ref,
