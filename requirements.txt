@@ -37,3 +37,6 @@ mlx-embeddings==0.1.0    # optional: only needed for EMBED_BACKEND=mlx_bge / mlx
 gradio==6.14.0
 plotly==6.7.0
 python-dotenv==1.2.2
+
+# --- Testing (`make test`) ---
+pytest==9.1.1
