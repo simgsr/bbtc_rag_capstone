@@ -232,16 +232,3 @@ class BibleEpubParser:
 
         flush()
         return list(verses_dict.values())
-
-
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) > 1:
-        parser = BibleEpubParser(sys.argv[1], "TEST")
-        results = parser.parse()
-        print(f"Parsed {len(results)} verses.")
-        sample = sorted([v for v in results if v['book'] == '2 Timothy' and v['chapter'] == 1],
-                        key=lambda x: x['verse'])
-        print(f"2 Timothy ch1 ({len(sample)} verses):")
-        for v in sample:
-            print(f"  {v['reference']}: {v['text'][:80]}")
