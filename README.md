@@ -319,7 +319,7 @@ make test
 # or: python -m pytest tests/ -v
 ```
 
-107 tests covering file classification, filename parsing, metadata extraction, verse normalization, sermon grouping, vector retrieval, UI helpers, and SQLite storage.
+109 tests covering file classification, filename parsing, metadata extraction, verse normalization, sermon grouping, vector retrieval, UI helpers, and SQLite storage.
 
 ---
 
@@ -359,7 +359,7 @@ make test
 │   │   └── viz_tool.py           # Plotly chart tool
 │   ├── llm.py                    # Unified LLM client (MLX / Ollama / Groq / Gemini); manages mlx_lm.server subprocess + cleanup
 │   └── ui_helpers.py             # Gradio rendering helpers
-├── tests/                        # 107 unit tests
+├── tests/                        # 109 unit tests
 ├── scripts/
 │   ├── migrate_db.py             # One-time COLLATE NOCASE migration (already applied)
 │   └── normalize_books.py        # One-time book-name migration utility
