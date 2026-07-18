@@ -48,3 +48,6 @@ pipeline_error*.txt
 resources.html
 *.log
 
+
+# --- Generated eval output (regenerable via evals/run_eval.py) ---
+evals/eval_report.json

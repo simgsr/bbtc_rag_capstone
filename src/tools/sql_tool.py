@@ -44,7 +44,15 @@ def make_sql_tool(db_path: str):
 
         Returns up to 200 rows."""
         try:
-            with sqlite3.connect(db_path) as conn:
+            # Open read-only. `query` is LLM-generated, and the LLM can be
+            # prompt-injected via sermon content (stored PDF/summary text) or
+            # simply hallucinate — a read-write connection would let a stray
+            # `DROP TABLE` / `DELETE` / `UPDATE` destroy the archive. Every
+            # documented tool query is a SELECT, so mode=ro breaks nothing and
+            # turns a data-loss footgun into a harmless "attempt to write a
+            # readonly database" error. uri=True is required for query-string
+            # connection params.
+            with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
                 cursor = conn.execute(query)
                 columns = [d[0] for d in cursor.description]
                 rows = cursor.fetchmany(200)
@@ -66,8 +74,8 @@ def make_sql_tool(db_path: str):
                                     f"No results found for '{name}'. "
                                     f"Did you mean one of these speakers: {', '.join(suggestions)}?"
                                 )
-                        except:
-                            pass
+                        except sqlite3.Error:
+                            pass  # suggestion lookup is best-effort; fall through to default
                     return "No results found."
                 result = "Columns: " + ", ".join(columns) + "\n"
                 for row in rows:

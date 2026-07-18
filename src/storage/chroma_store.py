@@ -16,6 +16,18 @@ collections so stored and query vectors remain comparable.
 import chromadb
 import os
 
+# Load .env here (not just in app.py / src.llm) so EVERY entry point that touches
+# the vector store — ingest.py, backfill scripts, the eval harness — resolves
+# EMBED_BACKEND identically. Without this, a standalone script that imports
+# SermonVectorStore without going through app/llm would fall back to the "st"
+# default and silently mix embedding backends within a collection (same dim, so
+# the dim guard below wouldn't catch it → degraded retrieval consistency).
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass  # dotenv optional; env may already be configured
+
 # Embedding backend, selected via EMBED_BACKEND (default: current sentence-transformers path).
 # NB: all vectors in a collection MUST come from one backend — switching requires a wipe +
 # re-ingest (`ingest.py --wipe`, `bible_ingest.py --wipe`) so query and doc vectors match.
@@ -76,8 +88,55 @@ class SermonVectorStore:
 
     def _embed(self, texts: list[str]) -> list[list[float]]:
         self._ensure_embeddings()
+        if not getattr(self, "_dim_checked", False):
+            self._check_vector_dim_alignment()
+            self._dim_checked = True
         safe_texts = [t[:8000] for t in texts]
         return self._embeddings.encode(safe_texts).tolist()
+
+    def _check_vector_dim_alignment(self):
+        """Fail fast if the current embedder's dimensionality doesn't match what's
+        already stored in a collection. This catches the footgun where EMBED_BACKEND
+        was switched (e.g. ``st`` 1024-dim → ``mlx_qwen`` 4096-dim) without the
+        required wipe + re-ingest — which would otherwise silently produce garbage
+        similarity scores or a dimension-mismatch crash deep inside a query.
+
+        Only checked against non-empty collections so a fresh DB never trips it.
+        Runs once per process (guarded by ``self._dim_checked``).
+        """
+        # Skip the probe entirely if every collection is empty (e.g. a fresh
+        # `ingest.py --wipe`) — otherwise we'd pay a full BGE-M3 forward pass just
+        # to read a dim that's never compared against anything.
+        if self._sermons.count() == 0 and self._bible.count() == 0:
+            return
+        # Prefer a static attribute when the backend exposes one (sentence-transformers
+        # caches the dim; no forward pass). Fall back to a 1-string encode otherwise.
+        dim = None
+        getter = getattr(self._embeddings, "get_sentence_embedding_dimension", None)
+        if callable(getter):
+            try:
+                dim = int(getter())
+            except Exception:
+                dim = None
+        if dim is None:
+            sample = self._embeddings.encode(["dim probe"])
+            shape = getattr(sample, "shape", None)
+            dim = shape[-1] if shape else len(sample[0])
+        for coll in (self._sermons, self._bible):
+            if coll.count() == 0:
+                continue
+            try:
+                peek = coll.get(include=["embeddings"], limit=1)
+                stored = peek.get("embeddings") or []
+            except Exception:
+                continue  # older Chroma may store embeddings elsewhere; skip silently
+            if stored and len(stored[0]) != dim:
+                raise RuntimeError(
+                    f"Embedding-dimension mismatch on '{coll.name}': stored vectors are "
+                    f"{len(stored[0])}-dim but the current EMBED_BACKEND produces {dim}-dim. "
+                    f"You switched embedding backends without wiping. Re-ingest with: "
+                    f"`ingest.py --wipe` and `python -m src.ingestion.bible.bible_ingest --wipe`."
+                )
 
     _MAX_BATCH = 100
 

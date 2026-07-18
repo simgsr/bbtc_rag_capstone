@@ -13,6 +13,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from src.ingestion.file_classifier import classify_file
 from src.ingestion.sermon_grouper import group_sermon_files
+from src.ingestion.title_chunk import build_sermon_title_text
 from src.ingestion.ng_extractor import extract_ng_metadata, extract_ng_body
 from src.ingestion.ps_extractor import (
     parse_verses_from_filename, parse_verses_from_text,
@@ -236,6 +237,21 @@ def process_group(group, registry: SermonRegistry, vector_store: SermonVectorSto
         docs.append(summary)
         metas.append({**chunk_meta, "doc_type": "summary"})
         ids.append(f"{sermon_id}_summary")
+
+    # Title/metadata chunk — always indexed (for every sermon, including textless
+    # ones). Body+summary chunks encode prose, but a query that matches the sermon's
+    # *title* (topic) or *theme* often won't surface them because the topic string
+    # lives only in metadata, not in any embedded text. Indexing a compact
+    # "Topic | Theme | Speaker | Key verse | Date" chunk makes topical/title queries
+    # retrieve the right sermon directly. doc_type="metadata" so it can be told apart
+    # from body/summary chunks at display time if needed. The text format is shared
+    # with backfill_title_chunks.py via build_sermon_title_text so the two paths
+    # can't drift.
+    title_text = build_sermon_title_text(topic, theme, speaker, key_verse, date)
+    if title_text:
+        docs.append(title_text)
+        metas.append({**chunk_meta, "doc_type": "metadata"})
+        ids.append(f"{sermon_id}_metadata")
 
     if docs:
         vector_store.upsert_sermon_chunks(docs, metas, ids)

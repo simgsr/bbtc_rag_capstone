@@ -128,7 +128,7 @@ _ollama_up = _ensure_ollama()
 _LLM_OPTIONS = {
     "qwen3.6:35b [local · fast · default]":  ("ollama", "qwen3.6:35b-mlx"),
     "qwen3.5:122b [local · deep]":           ("ollama", "qwen3.5:122b-a10b-q4_K_M"),
-    "gpt-oss:120b [local · RAG Q&A]":        ("ollama", "gpt-oss:120b"),
+    "deepseek-v4-pro [local · RAG Q&A]":     ("ollama", "deepseek-v4-pro:cloud"),
     "Gemini 2.5 Flash [cloud · fast]":       ("gemini", "gemini-2.5-flash"),
     "Gemini 2.5 Pro [cloud · best]":         ("gemini", "gemini-2.5-pro"),
     "Groq [cloud]":                          ("groq",   GROQ_MODEL),
@@ -243,15 +243,20 @@ try:
         "Try 2-3 query variants if the first call returns few or no results.\n\n"
 
         "## get_bible_versions_tool\n"
-        "Returns all stored translations (KJV, ASV, YLT, NIV, ESV) of a specific verse.\n"
+        "Returns all stored translations of a specific verse. The archive holds 7 versions:\n"
+        "KJV, ASV, YLT, BBE (Basic English), ChiUn (Chinese Union — Chinese text), NIV, ESV.\n"
         "  - Pass the canonical reference exactly: 'Book Chapter:Verse' (e.g. 'John 3:16', '1 John 1:9')\n"
-        "  - Use for Translation Audit requests or any question comparing Bible versions.\n\n"
+        "  - Use for Translation Audit requests or any question comparing Bible versions.\n"
+        "  - Note: ChiUn returns Chinese text; only include it when the user wants Chinese.\n\n"
 
         "## search_bible_tool\n"
         "Semantic search across the full Bible archive "
-        "(KJV, ASV, YLT, NIV, ESV — approx. 102,000 verse-chunks).\n"
+        "(KJV, ASV, YLT, BBE, ChiUn, NIV, ESV — approx. 213,000 verse-chunks).\n"
         "  - query: 3-6 word concept phrase (e.g. 'forgiveness of sins', 'walking by faith')\n"
         "  - k: number of results (default 5)\n"
+        "  - version: optional filter (KJV | ASV | YLT | BBE | ChiUn | NIV | ESV). For English\n"
+        "    topic queries, pass version='NIV' (or another English version) to avoid Chinese\n"
+        "    ChiUn verses surfacing in the results; pass version='ChiUn' for Mandarin queries.\n"
         "Returns verse text with reference and translation label.\n\n"
 
         "## viz_tool\n"
@@ -1028,9 +1033,22 @@ with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 0)) or None
+    # Auth is opt-in via env vars. The UI binds 0.0.0.0 (LAN-reachable), so set
+    # GRADIO_USERNAME / GRADIO_PASSWORD to gate access when on a shared network.
+    # When unset, launch without auth (zero-config for localhost use) but warn.
+    auth_user = os.getenv("GRADIO_USERNAME")
+    auth_pass = os.getenv("GRADIO_PASSWORD")
+    auth_creds = (auth_user, auth_pass) if (auth_user and auth_pass) else None
+    if auth_creds is None:
+        print(
+            "⚠️  Gradio UI binding 0.0.0.0 with no auth — reachable from your LAN. "
+            "Set GRADIO_USERNAME and GRADIO_PASSWORD in .env to gate access.",
+            flush=True,
+        )
     demo.launch(
         server_name="0.0.0.0",
         server_port=port,
+        auth=auth_creds,
         theme=gr.themes.Default(),
         css=custom_css,
         js=_force_light_js,

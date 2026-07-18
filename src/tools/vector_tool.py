@@ -40,8 +40,11 @@ def make_vector_tool(vector_store: SermonVectorStore):
             conditions.append({"year": {"$gte": min_year}})
         if max_year is not None:
             conditions.append({"year": {"$lte": max_year}})
-        if speaker:
-            conditions.append({"speaker": {"$eq": speaker}})
+        # NOTE: `speaker` is NOT pushed into the Chroma `where` clause. Chroma metadata
+        # filters only support exact `$eq` (no substring/`$like`), but stored speakers
+        # carry titles ("SP Chua Seng Lee") so an exact match on "Chua" would return
+        # nothing. Instead we oversample and post-filter by case-insensitive substring,
+        # which honours the docstring's "partial speaker name" promise.
 
         where: dict | None = None
         if len(conditions) == 1:
@@ -49,11 +52,34 @@ def make_vector_tool(vector_store: SermonVectorStore):
         elif len(conditions) > 1:
             where = {"$and": conditions}
 
-        results = vector_store.search_sermons(query, k=max(k, 5), where=where)
+        fetch_k = max(k, 5)
+        if speaker:
+            # Oversampling by a fixed factor risks under-filling `k` for a prolific
+            # speaker on a rare topic — the 4× window may not contain enough of
+            # *their* sermons (e.g. SP Daniel Foo has 110; a niche query could have
+            # none of his in the top 20). Fetch the whole collection instead, then
+            # post-filter by speaker and keep the top-`k` by distance. The
+            # year/min/max `where` clause still applies inside Chroma, so this is
+            # bounded to the year-matched subset, and `_search` embeds the query
+            # only once regardless of `n_results`, so the cost is just an in-memory
+            # Chroma scan — negligible for this corpus (~2k chunks).
+            fetch_k = max(fetch_k, vector_store.counts()["sermon_collection"])
+        results = vector_store.search_sermons(query, k=fetch_k, where=where)
+        if speaker and results:
+            needle = speaker.lower()
+            results = [r for r in results
+                       if needle in ((r.get("metadata") or {}).get("speaker") or "").lower()]
+        results = results[:max(k, 5)]
         if not results:
             return "No relevant sermon content found."
 
-        sermons = {}
+        # Group by sermon; keep body/summary excerpts separate from doc_type="metadata"
+        # title chunks. The metadata chunk ("Topic | Theme | Speaker | Key verse |
+        # Date") is indexed so topical queries can *find* a sermon, but its content is
+        # a restatement of the header — don't surface it as an excerpt when real
+        # body/summary excerpts exist. For textless sermons whose only chunk is
+        # metadata, fall back to it so they still show something.
+        sermons: dict[tuple, dict] = {}
         for res in results:
             m = res.get("metadata") or {}
             key = (
@@ -62,13 +88,16 @@ def make_vector_tool(vector_store: SermonVectorStore):
                 m.get("date") or "",
                 m.get("key_verse") or ""
             )
-            if key not in sermons:
-                sermons[key] = []
-            if res["content"] not in sermons[key]:
-                sermons[key].append(res["content"])
+            bucket = sermons.setdefault(key, {"excerpts": [], "meta": None})
+            if m.get("doc_type") == "metadata":
+                if bucket["meta"] is None:
+                    bucket["meta"] = res["content"]
+            elif res["content"] not in bucket["excerpts"]:
+                bucket["excerpts"].append(res["content"])
 
         parts = []
-        for key, contents in sermons.items():
+        for key, bucket in sermons.items():
+            contents = bucket["excerpts"] or ([bucket["meta"]] if bucket["meta"] else [])
             topic, speaker, date, key_verse = key
             header = f"[{topic} | {speaker} | {date} | {key_verse}]"
             merged_content = "\n\n... [another excerpt from same sermon] ...\n\n".join(contents)

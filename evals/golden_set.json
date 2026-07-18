@@ -1,0 +1,107 @@
+{
+  "_comment": "Golden set for the BBTC RAG audit. Retrieval items measure search_sermons recall@k / filter precision against known sermon_ids. Groundedness items drive the full ReAct agent (app.respond) and check the answer contains expected facts, avoids forbidden phrases, and actually used a tool. sermon_ids and facts were verified against data/sermons.db on 2026-07-18.",
+  "retrieval": [
+    {
+      "id": "ret-01-anointed-worship",
+      "query": "anointed worship",
+      "k": 5,
+      "must_find": ["2017-09-09-anointed-worship"],
+      "topic_keyword": "worship"
+    },
+    {
+      "id": "ret-02-resurrection",
+      "query": "resurrection of Christ",
+      "k": 5,
+      "must_find": ["2021-04-03-believe-in-the-resurrection-of-christ"],
+      "topic_keyword": "resurrection"
+    },
+    {
+      "id": "ret-03-prayer",
+      "query": "prayer that the church needs",
+      "k": 8,
+      "topic_keyword": "pray"
+    },
+    {
+      "id": "ret-04-discipleship",
+      "query": "journey of a disciple",
+      "k": 5,
+      "must_find": ["2020-11-14-journey-of-a-disciple-part-2"],
+      "topic_keyword": "disciple"
+    },
+    {
+      "id": "ret-05-outreach",
+      "query": "community outreach heart",
+      "k": 5,
+      "must_find": ["2016-09-03-cultivating-a-heart-of-community-outreach"],
+      "topic_keyword": "outreach"
+    },
+    {
+      "id": "ret-06-speaker-filter",
+      "query": "discipleship",
+      "k": 5,
+      "speaker": "Chua",
+      "filter_check": "speaker_contains",
+      "filter_value": "Chua"
+    },
+    {
+      "id": "ret-07-year-filter",
+      "query": "worship",
+      "k": 5,
+      "year": 2017,
+      "filter_check": "year_equals",
+      "filter_value": 2017
+    }
+  ],
+  "groundedness": [
+    {
+      "id": "gnd-01-speaker-count",
+      "question": "How many sermons has SP Daniel Foo preached in total?",
+      "expected_facts": ["Daniel Foo"],
+      "forbidden_phrases": ["based on my knowledge", "typically", "i believe", "in general"],
+      "must_use_tool": true
+    },
+    {
+      "id": "gnd-02-top-verse",
+      "question": "What is the most frequently preached Bible verse in the archive?",
+      "expected_facts": ["John 3:16"],
+      "forbidden_phrases": ["based on my knowledge", "typically", "i believe"],
+      "must_use_tool": true
+    },
+    {
+      "id": "gnd-03-sermon-summary",
+      "question": "Summarise the sermon titled 'Anointed Worship'.",
+      "expected_facts": ["Anointed Worship", "Jeffrey Aw"],
+      "forbidden_phrases": ["based on my knowledge", "i'm not sure", "i do not have"],
+      "must_use_tool": true
+    },
+    {
+      "id": "gnd-04-archive-span",
+      "question": "What years does the sermon archive cover?",
+      "expected_facts": ["2015", "2026"],
+      "forbidden_phrases": ["based on my knowledge", "typically"],
+      "must_use_tool": true
+    },
+    {
+      "id": "gnd-05-top-speakers",
+      "question": "Name the top 3 speakers by sermon count in the archive.",
+      "expected_facts": ["Daniel Foo", "Chua Seng Lee"],
+      "forbidden_phrases": ["based on my knowledge", "typically", "i believe"],
+      "must_use_tool": true
+    },
+    {
+      "id": "gnd-06-negative-query",
+      "question": "What does the sermon archive say about quantum physics?",
+      "expected_facts": [],
+      "forbidden_phrases": ["based on my knowledge", "typically", "in general", "quantum physics is"],
+      "must_use_tool": true,
+      "expect_no_records": true
+    },
+    {
+      "id": "gnd-07-translation-audit",
+      "question": "Compare the Bible translations of John 3:16 available in the archive.",
+      "expected_facts": ["John 3:16"],
+      "forbidden_phrases": ["based on my knowledge", "i do not have"],
+      "must_use_tool": true
+    }
+  ]
+}

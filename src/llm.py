@@ -280,10 +280,36 @@ def get_llm(provider="ollama_local", temperature=0, model=None):
         return MLXChatModel(model_name=model or MLX_INGEST_MODEL, temperature=float(temperature))
 
     from langchain_ollama import ChatOllama
-    num_ctx = int(os.getenv("OLLAMA_NUM_CTX", "32768"))
+    def _env_int(name, default):
+        v = os.getenv(name)
+        try:
+            return int(v) if v not in (None, "") else default
+        except (TypeError, ValueError):
+            print(f"⚠️ Invalid int for {name}={v!r}; using default {default}", flush=True)
+            return default
+    def _env_float(name, default):
+        v = os.getenv(name)
+        try:
+            return float(v) if v not in (None, "") else default
+        except (TypeError, ValueError):
+            print(f"⚠️ Invalid float for {name}={v!r}; using default {default}", flush=True)
+            return default
+    num_ctx = _env_int("OLLAMA_NUM_CTX", 32768)
+    # Override the Modelfile's sampling defaults explicitly so generation isn't
+    # silently controlled by per-model Modelfile params (some BBTC Ollama models
+    # ship with temperature=1 / presence_penalty=1.5). ChatOllama forwards these
+    # recognized fields into the request `options`, which override Modelfile values
+    # for the request. NOTE: ChatOllama does NOT expose `presence_penalty` / `min_p`
+    # (config is extra='ignore') — those remain at Modelfile values; edit the
+    # Modelfile directly (`ollama show --modelfile X > MF; ollama create -q`) if you
+    # need to neutralise them. All values below are env-overridable.
     return ChatOllama(
         model=model or OLLAMA_CHAT_MODEL,
         temperature=temperature,
         timeout=600,
         num_ctx=num_ctx,
+        seed=_env_int("OLLAMA_SEED", 0),              # deterministic sampling
+        top_k=_env_int("OLLAMA_TOP_K", 40),
+        top_p=_env_float("OLLAMA_TOP_P", 0.9),
+        repeat_penalty=_env_float("OLLAMA_REPEAT_PENALTY", 1.1),
     )
