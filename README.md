@@ -27,7 +27,7 @@ The LangGraph ReAct agent decides in real time which tool to invoke — SQL for 
 
 | Layer | Technology |
 |---|---|
-| **Chat LLM** | Picked at runtime via the "Inference Engine" dropdown: `qwen3.6:35b-mlx` (Ollama, local, default) · `qwen3.5:122b` · `gpt-oss:120b` · Gemini 2.5 Flash / Pro (cloud) · Groq (cloud) |
+| **Chat LLM** | Picked at runtime via the "Inference Engine" dropdown: `qwen3.6:35b-mlx` (Ollama, local, default) · `qwen3.5:122b` · `deepseek-v4-pro:cloud` · Gemini 2.5 Flash / Pro (cloud) · Groq (cloud) |
 | **Ingest LLM** | Apple MLX (`Qwen3-4B-4bit`) on Neural Engine — default; Ollama / Groq / Gemini configurable |
 | **Embeddings** | BGE-M3 (multilingual) — `sentence-transformers` on MPS by default, or native MLX (`bge-m3` / `Qwen3-Embedding`) via `EMBED_BACKEND` |
 | **Vector store** | ChromaDB |
@@ -114,7 +114,7 @@ Pull the default chat model before running (embeddings no longer need Ollama):
 ollama pull qwen3.6:35b-mlx    # default chat LLM — ~21 GB
 # optional heavier engines offered in the dropdown:
 # ollama pull qwen3.5:122b-a10b-q4_K_M   # ~81 GB (deep)
-# ollama pull gpt-oss:120b               # ~65 GB (RAG Q&A)
+# ollama pull deepseek-v4-pro:cloud      # (RAG Q&A)
 ```
 
 > **Hardware guide** — see `.env.example` for model recommendations based on available RAM (8 GB → 96 GB+).
@@ -122,7 +122,7 @@ ollama pull qwen3.6:35b-mlx    # default chat LLM — ~21 GB
 **Ingest and embeddings run fully on Apple Silicon without Ollama; the chat agent runs on Ollama (local) or a cloud backend:**
 
 - **Ingest LLM** — [mlx-lm](https://github.com/ml-explore/mlx-lm) runs `Qwen3-4B-4bit` on the Neural Engine. The model (~2.5 GB) is downloaded from HuggingFace automatically on first run.
-- **Chat LLM (Ollama, default)** — the "Inference Engine" dropdown defaults to `qwen3.6:35b-mlx` served by Ollama; it also offers `qwen3.5:122b` and `gpt-oss:120b` (local), plus Gemini 2.5 Flash / Pro and Groq (cloud, key-gated). Each dropdown entry carries its own model, and agents are cached per `(provider, model)` so switching engines is instant after the first load.
+- **Chat LLM (Ollama, default)** — the "Inference Engine" dropdown defaults to `qwen3.6:35b-mlx` served by Ollama; it also offers `qwen3.5:122b` and `deepseek-v4-pro:cloud` (local), plus Gemini 2.5 Flash / Pro and Groq (cloud, key-gated). Each dropdown entry carries its own model, and agents are cached per `(provider, model)` so switching engines is instant after the first load.
 - **Embeddings** — `sentence-transformers` runs BGE-M3 on MPS (Apple Silicon GPU). The model (~570 MB) is downloaded from HuggingFace automatically on first run.
 
 Both are installed via `requirements.txt` — no extra steps needed.
@@ -176,7 +176,7 @@ make ingest             # pick up only the new files
 
 ## Bible Archive (optional)
 
-KJV, ASV, and YLT are downloaded automatically from Scrollmapper (public domain). NIV and ESV require EPUB files you supply yourself (copyrighted — not included in this repo).
+The archive holds **7 translations**. Five are downloaded automatically from Scrollmapper (public domain): **KJV, ASV, YLT, BBE** (Basic English), and **ChiUn** (Chinese Union — Chinese text). The remaining two — **NIV** and **ESV** — require EPUB files you supply yourself (copyrighted — not included in this repo).
 
 Place them at:
 ```
@@ -186,11 +186,11 @@ data/bibles/ESV The Holy Bible.epub
 
 Then ingest:
 ```bash
-# All 5 translations (NIV/ESV skipped automatically if files are absent)
+# All 7 translations (NIV/ESV skipped automatically if their EPUBs are absent)
 python -m src.ingestion.bible.bible_ingest
 
-# Public-domain only
-python -m src.ingestion.bible.bible_ingest --versions KJV ASV YLT
+# Public-domain only (Scrollmapper JSON — no EPUBs needed)
+python -m src.ingestion.bible.bible_ingest --versions KJV ASV YLT BBE ChiUn
 
 # Wipe and re-ingest bible_collection
 python -m src.ingestion.bible.bible_ingest --wipe
@@ -209,7 +209,9 @@ cp .env.example .env
 | Variable | Default | Description |
 |---|---|---|
 | `OLLAMA_CHAT_MODEL` | `gemma4:latest` | Fallback Ollama chat model. The "Inference Engine" dropdown ships explicit per-entry models (`_LLM_OPTIONS` in `app.py`), so this is only used as a default when no model is supplied |
+| `GRADIO_USERNAME` / `GRADIO_PASSWORD` | *(unset)* | The UI binds `0.0.0.0` (LAN-reachable). Set both to gate access with a login prompt; leave unset for zero-config localhost use (a warning prints at launch) |
 | `OLLAMA_NUM_CTX` | `32768` | Ollama context window (default 2048 is too small for ReAct + history) |
+| `OLLAMA_SEED` / `OLLAMA_TOP_K` / `OLLAMA_TOP_P` / `OLLAMA_REPEAT_PENALTY` | `0` / `40` / `0.9` / `1.1` | Ollama sampling overrides — set explicitly so per-model Modelfile defaults don't silently control generation. Malformed values warn and fall back to the default |
 | `MLX_CHAT_MODEL` | `mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit` | MLX chat model for the latent `mlx_lm.server` chat backend. **Not** listed in the current "Inference Engine" dropdown (chat runs on Ollama/cloud); the `MLX_*` server vars below only apply if that backend is invoked directly. |
 | `MLX_SERVER_HOST` / `MLX_SERVER_PORT` | `127.0.0.1` / `8081` | Host/port for the local `mlx_lm.server` subprocess |
 | `MLX_PROMPT_CACHE_SLOTS` | `4` | KV-cache slots — reuses system prompt + tool schemas across ReAct calls |
@@ -300,15 +302,15 @@ bible_versions(
 ### ChromaDB (`data/chroma_db/`)
 
 **`sermon_collection`**
-- Chunks: NG body text (800 tokens / 150 overlap) + LLM summary (single chunk) per sermon
+- Chunks: NG body text (800 tokens / 150 overlap) + LLM summary (single chunk) + a `doc_type="metadata"` title chunk per sermon
 - Metadata: `{sermon_id, doc_type, speaker, date, year, topic, theme, language, key_verse}`
-- Embeddings: BGE-M3 via sentence-transformers (MPS)
+- Embeddings: BGE-M3 via the configured `EMBED_BACKEND` (default: sentence-transformers on MPS)
 
 **`bible_collection`**
-- ~102,790 chunks across 5 translations (~31,000 verses each)
-- Sources: KJV, ASV, YLT from Scrollmapper (public domain); NIV, ESV from local EPUBs
+- ~213,000 chunks across 7 translations (~31,000 verses each; ChiUn ~31,100, NIV/ESV slightly fewer due to EPUB verse mapping)
+- Sources: KJV, ASV, YLT, BBE, ChiUn from Scrollmapper (public domain JSON); NIV, ESV from local EPUBs
 - Metadata: `{book, chapter, verse, version, reference}`
-- Embeddings: BGE-M3 via sentence-transformers (MPS)
+- Embeddings: BGE-M3 via the configured `EMBED_BACKEND` (default: sentence-transformers on MPS)
 
 ---
 
@@ -319,7 +321,7 @@ make test
 # or: python -m pytest tests/ -v
 ```
 
-109 tests covering file classification, filename parsing, metadata extraction, verse normalization, sermon grouping, vector retrieval, UI helpers, and SQLite storage.
+119 tests covering file classification, filename parsing, metadata extraction, verse normalization, sermon grouping, vector retrieval, Bible tools, title-chunk formatting, UI helpers, and SQLite storage.
 
 ---
 
@@ -359,7 +361,7 @@ make test
 │   │   └── viz_tool.py           # Plotly chart tool
 │   ├── llm.py                    # Unified LLM client (MLX / Ollama / Groq / Gemini); manages mlx_lm.server subprocess + cleanup
 │   └── ui_helpers.py             # Gradio rendering helpers
-├── tests/                        # 109 unit tests
+├── tests/                        # 119 unit tests
 ├── scripts/
 │   ├── migrate_db.py             # One-time COLLATE NOCASE migration (already applied)
 │   └── normalize_books.py        # One-time book-name migration utility
@@ -374,7 +376,7 @@ make test
 
 - **Classify-before-download**: The scraper classifies filenames against a regex before downloading, so handout PDFs are never fetched.
 - **~50% image-based PDFs**: Many PS slide files have no extractable text — verse extraction relies entirely on filename regex parsing.
-- **Fully local by default**: the chat agent runs on Ollama (default `qwen3.6:35b-mlx`, with `qwen3.5:122b` / `gpt-oss:120b` as heavier options). Ingest LLM runs on MLX (Neural Engine) and embeddings run on MPS via `sentence-transformers` — no Ollama needed for ingest or embeddings. Gemini/Groq are optional cloud fallbacks.
+- **Fully local by default**: the chat agent runs on Ollama (default `qwen3.6:35b-mlx`, with `qwen3.5:122b` / `deepseek-v4-pro:cloud` as heavier options). Ingest LLM runs on MLX (Neural Engine) and embeddings run on MPS via `sentence-transformers` — no Ollama needed for ingest or embeddings. Gemini/Groq are optional cloud fallbacks.
 - **NG labeled fields are reliable from 2022+**: Pre-2022 files fall back to `filename_parser.py` heuristics.
 - **Manifest-based pairing**: The scraper writes `_manifest_*.json` files that record which PDFs came from the same sermon page. The grouper reads these first for exact pairing, then falls back to fuzzy date/topic matching.
 

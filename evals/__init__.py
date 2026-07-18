@@ -1,0 +1,1 @@
+# BBTC RAG evaluation harness — retrieval recall and answer groundedness.

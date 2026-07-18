@@ -26,10 +26,10 @@ Required Ollama models:
 **Chat LLM (Gradio agent)** — picked at runtime via the "Inference Engine" dropdown. The dropdown's option list is defined by `_LLM_OPTIONS` in `app.py` (a `label → (provider, model)` map); the first entry is the default engine and each label carries its own explicit model, so switching engines never falls back to an env default. Current options:
   - `qwen3.6:35b-mlx` — Ollama, local, **default**
   - `qwen3.5:122b-a10b-q4_K_M` — Ollama, local, deep
-  - `gpt-oss:120b` — Ollama, local, RAG Q&A
+  - `deepseek-v4-pro:cloud` — Ollama, local, RAG Q&A
   - `gemini-2.5-flash` / `gemini-2.5-pro` — Gemini, cloud (set `GOOGLE_API_KEY`)
   - Groq — cloud, uses `GROQ_MODEL` (set `GROQ_API_KEY`)
-- `ollama` backend — `ChatOllama` is constructed with `timeout=600` (raised from 120s) so large models like `qwen3.5:122b` / `gpt-oss:120b` don't time out on long generations. To add/change/reorder engines, edit `_LLM_OPTIONS` only — the dropdown, badge, and cache all derive from it.
+- `ollama` backend — `ChatOllama` is constructed with `timeout=600` (raised from 120s) so large models like `qwen3.5:122b` / `deepseek-v4-pro:cloud` don't time out on long generations, and with explicit `seed`/`top_k`/`top_p`/`repeat_penalty` overrides (env-overridable: `OLLAMA_SEED`/`OLLAMA_TOP_K`/`OLLAMA_TOP_P`/`OLLAMA_REPEAT_PENALTY`) so per-model Modelfile sampling defaults don't silently control generation. To add/change/reorder engines, edit `_LLM_OPTIONS` only — the dropdown, badge, and cache all derive from it.
 - Agents/LLMs are cached per **`(provider, model)`** key (not per provider) so distinct Ollama models don't collide. The default engine's agent graph is pre-warmed at startup (Ollama/cloud clients construct lazily, so no weights load then).
 - MLX chat (`mlx_lm.server` + `ChatOpenAI`) remains implemented in `src/llm.py` but is **not** listed in the dropdown; MLX is still the default **ingest** backend (below).
 
@@ -64,7 +64,7 @@ DAGSTER_HOME=$(pwd)/.dagster dagster dev -m dagster_pipeline
 # Scrape a single year from BBTC website
 python src/scraper/bbtc_scraper.py 2024
 
-# Ingest all Bible translations (KJV, ASV, YLT, NIV, ESV)
+# Ingest all Bible translations (KJV, ASV, YLT, BBE, ChiUn, NIV, ESV)
 python -m src.ingestion.bible.bible_ingest
 
 # Wipe and re-ingest bible_collection
@@ -134,8 +134,8 @@ Gradio UI
 - **`sql_query_tool`** — SQL against `data/sermons.db`; use for counts, lists, verse aggregations, and **gap/coverage analysis** ("books never preached") via an anti-join against the `bible_books` reference table (`... WHERE book_name NOT IN (SELECT DISTINCT book FROM verses)`) — the tool docstring documents `bible_books`/`book_aliases` and steers the model to anti-join rather than recall the 66-book list. Returns up to **200** rows; when a result hits exactly 200 the tool appends a truncation notice so the model doesn't silently reason over a partial set
 - **`search_sermons_tool`** — BGE-M3 semantic search over `sermon_collection`; use for content queries
 - **`viz_tool`** — Plotly interactive charts: `sermons_per_speaker`, `sermons_per_year`, `verses_per_book`, `sermons_scatter`; accepts optional `top_n: int` (default 15) to control how many results are shown in ranked charts (`sermons_per_speaker`, `verses_per_book`)
-- **`get_bible_versions_tool`** — Returns all stored translations (NIV, ESV, KJV, ASV, YLT) of a specific verse from `bible_collection`; use for Translation Audit / version comparison
-- **`search_bible_tool`** — BGE-M3 semantic search over `bible_collection`; use for "find passages about [topic]" queries
+- **`get_bible_versions_tool`** — Returns all stored translations (KJV, ASV, YLT, BBE, ChiUn, NIV, ESV) of a specific verse from `bible_collection`; use for Translation Audit / version comparison
+- **`search_bible_tool`** — BGE-M3 semantic search over `bible_collection`; takes optional `version` filter (e.g. `NIV` to keep English-only, `ChiUn` for Mandarin); use for "find passages about [topic]" queries
 
 ### SQLite Schema
 
@@ -167,7 +167,7 @@ verses(
 )
 
 bible_versions(
-  version_id   TEXT PRIMARY KEY,  -- "KJV", "ASV", "YLT", "NIV", "ESV"
+  version_id   TEXT PRIMARY KEY,  -- "KJV", "ASV", "YLT", "BBE", "ChiUn", "NIV", "ESV"
   filename     TEXT,              -- scrollmapper/{id}.json or data/bibles/*.epub
   status       TEXT,              -- "indexed"
   date_indexed TEXT               -- ISO timestamp
@@ -189,18 +189,41 @@ book_aliases(
 ### ChromaDB
 
 **`sermon_collection`**
-- Chunks: NG body text (800/150) + LLM summary (single chunk) per sermon
+- Chunks: NG body text (800/150) + LLM summary (single chunk) + a `doc_type="metadata"` title chunk ("Topic | Theme | Speaker | Key verse | Date") per sermon
 - Metadata per chunk: `{sermon_id, doc_type, speaker, date, year, topic, theme, language, key_verse}`
-- Embeddings: `BGE-M3` via sentence-transformers on MPS
+- Embeddings: `BGE-M3` via the configured `EMBED_BACKEND` (see Embeddings section)
 
 **`bible_collection`**
-- ~102,790 chunks (5 translations × ~31,000 verses each)
-- Sources: KJV, ASV, YLT from Scrollmapper JSON (public domain); NIV, ESV from local EPUB files
+- ~213,000 chunks across **7 translations**: KJV, ASV, YLT, BBE (Basic English), ChiUn (Chinese Union — Chinese text), NIV, ESV
+- Sources: KJV, ASV, YLT, BBE, ChiUn from Scrollmapper JSON (public domain); NIV, ESV from local EPUB files
 - Metadata per chunk: `{book, chapter, verse, version, reference}`
 - IDs: `{VERSION}_{Book} {chapter}:{verse}` (e.g. `NIV_John 3:16`)
-- Embeddings: `BGE-M3` via sentence-transformers on MPS
+- Embeddings: `BGE-M3` via the configured `EMBED_BACKEND` (see Embeddings section)
+- Note: `ChiUn` is Chinese. `search_bible_tool` takes an optional `version` filter; for English topic queries pass an English version (e.g. `NIV`) to avoid Chinese verses surfacing. `get_bible_versions_tool` returns all 7 versions of a verse — only include ChiUn when Chinese is wanted.
 
 ## Notable Quirks
+
+- **Metadata chunks for every sermon** (`ingest.py`): in addition to body+summary chunks, every sermon gets a `doc_type="metadata"` chunk embedding `"Topic | Theme | Speaker | Key verse | Date"`. This makes topical/title queries (e.g. "prayer", "discipleship") retrieve the right sermon directly — without it, the topic lives only in metadata and a title-matching query won't surface a sermon unless its body text overlaps. `search_sermons_tool` keeps these chunks retrievable but does NOT surface their content as excerpts (the header already shows the metadata); for textless sermons whose only chunk is metadata it falls back to that content. The title text is built by the shared `build_sermon_title_text()` in `src/ingestion/title_chunk.py` so the ingest path and the backfill script can't drift (they once did — backfill hardcoded `language`). To backfill this chunk for sermons ingested before the change without re-running LLM summaries: `python backfill_title_chunks.py` (idempotent; upserts `{sermon_id}_metadata`, preserves the sermon's actual `language`).
+- **`search_sermons_tool` speaker filter is partial-match** (`src/tools/vector_tool.py`): Chroma metadata `where` is exact-match only, but speakers carry titles ("SP Chua Seng Lee"), so the speaker filter is applied by fetching the **whole collection** (`k = counts()["sermon_collection"]`, bounded by any year/min/max `where` clause inside Chroma) then case-insensitive substring post-filtering, not via a `where` clause. Fetching all (rather than a fixed 4× oversample) guarantees a prolific speaker on a rare topic still fills `k` — e.g. SP Daniel Foo has 110 sermons; a niche query could have none of his in a 4× window. Cost is just an in-memory Chroma scan since `_search` embeds the query only once regardless of `n_results`. Year/min_year/max_year still use `where`.
+- **`.env` is loaded in `chroma_store.py`** (not just `app.py` / `src/llm.py`) so every entry point that touches the vector store — `ingest.py`, `backfill_title_chunks.py`, the eval harness — resolves `EMBED_BACKEND` identically. Without this, a standalone script would fall back to `st` and silently mix embedding backends within a collection (same dim → the dim guard below wouldn't catch it → degraded retrieval).
+- **Embedding-dim guard** (`SermonVectorStore._check_vector_dim_alignment`): on first `_embed`, compares the current embedder's output dim against what's stored in each non-empty collection and raises a clear `RuntimeError` on mismatch (the `EMBED_BACKEND`-switched-without-wipe footgun). Runs once per process. It catches dimension changes (e.g. `st` 1024 → `mlx_qwen` 4096); it does NOT catch same-dim backend swaps (e.g. `st` ↔ `mlx_bge`, both 1024) — those are prevented by the `.env`-loading rule above.
+- **Ollama sampling overrides** (`src/llm.py:get_llm`): `ChatOllama` is constructed with explicit `seed`/`top_k`/`top_p`/`repeat_penalty` (env-overridable: `OLLAMA_SEED`, `OLLAMA_TOP_K`, `OLLAMA_TOP_P`, `OLLAMA_REPEAT_PENALTY`) so per-model Modelfile defaults (some ship `temperature=1` / `presence_penalty=1.5`) don't silently control generation. `temperature` is forwarded from the caller. `presence_penalty` / `min_p` are NOT exposed by `ChatOllama` (config `extra='ignore'`) — to neutralise those, edit the Modelfile directly (`ollama show --modelfile X > MF; ollama create -q`).
+
+## RAG Evaluation Harness
+
+`evals/` contains a retrieval + groundedness eval harness driven by `evals/golden_set.json`:
+
+```bash
+python -m evals.run_eval --retrieval     # fast, embedding-only: recall@k + filter precision
+python -m evals.run_eval --groundedness  # slow, invokes live agent via app.respond
+python -m evals.run_eval                 # both; writes evals/eval_report.json; exits non-zero if any pass-rate < 0.7
+```
+
+- **Retrieval** items drive `SermonVectorStore.search_sermons` (replicating the tool's filter handling) and measure recall@k against `must_find`/`must_find_any` sermon_ids, soft topic-precision@k, and hard filter-precision (speaker/year). Baseline: ~0.86 pass rate, ~0.86 avg recall.
+- **Groundedness** items invoke the full ReAct agent and check each answer for expected facts present, forbidden phrases absent (e.g. "based on my knowledge", "typically"), that a tool was actually used, and that negative queries declare "no records" rather than fabricate. Baseline: ~0.86–1.0 pass rate (gnd-05 top-speakers is a known brittle case — the model occasionally omits a verbatim name despite using SQL).
+- Golden-set facts/sermon_ids were verified against `data/sermons.db`; re-verify if the archive is re-ingested.
+
+## Notable Quirks (legacy)
 
 - NG labeled fields (`TOPIC`, `SPEAKER`, etc.) are reliable for 2022+ files. Older files fall back to `filename_parser.py`.
 - Some older BBTC pages (pre-2020) only posted one file (slides, no cell guide). These produce PS-only sermon groups with no topic/speaker — this is expected, not a bug. Genuinely PS-only groups are skipped correctly in incremental mode via `ps_file_indexed`.

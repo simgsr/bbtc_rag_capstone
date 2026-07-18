@@ -20,21 +20,21 @@ chromadb==1.5.9
 sentence-transformers==5.5.1
 
 # --- LLM orchestration (agent + ingest) ---
-langchain==1.3.1
+langchain==1.3.9
 langchain-text-splitters==1.1.2
 langchain-chroma==1.1.0
 langchain-ollama==1.1.0
 langchain-groq==1.1.2
 langchain-google-genai==4.2.3
 langchain-openai==1.3.0
-langgraph==1.2.1
+langgraph==1.2.9
 
 # --- Apple Silicon (MLX) inference & embeddings ---
 mlx-lm==0.31.3
 mlx-embeddings==0.1.0    # optional: only needed for EMBED_BACKEND=mlx_bge / mlx_qwen
 
 # --- UI, visualisation & config ---
-gradio==6.14.0
+gradio==6.16.0
 plotly==6.7.0
 python-dotenv==1.2.2
 
