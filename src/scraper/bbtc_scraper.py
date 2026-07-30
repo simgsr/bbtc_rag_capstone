@@ -128,11 +128,32 @@ class BBTCScraper:
 
         return self._clean_text(text), quality
 
+    @staticmethod
+    def _staging_filename(url: str, lang: str, year: int) -> str | None:
+        """Build the staging filename for a download URL, hardened against path
+        traversal.
+
+        The remote URL is attacker-influenced (the scraped site is third-party and
+        ``direct_files`` accepts any host), so it must not be trusted as a path.
+        The original code took ``os.path.basename`` *before* ``unquote``, so
+        URL-encoded separators (``%2f`` → ``/``, ``%2e%2e`` → ``..``) survived into
+        the filename and let a crafted URL escape the staging dir when written
+        (e.g. ``…/..%2f..%2f..%2fingest.py``). Here we decode first, then reduce to
+        a bare basename (no separators / ``..``) so the result is always a plain
+        filename. Returns ``None`` for an empty/``.``/``..`` name.
+        """
+        decoded = urllib.parse.unquote(os.path.basename(url.split('?')[0]))
+        name = os.path.basename(decoded.replace("\\", "/"))
+        if name in ("", ".", ".."):
+            return None
+        return f"{lang}_{year}_{name}"
+
     def _process_link(self, url: str, year: int, lang: str) -> str | None:
         """Download and extract one file. Returns the staging filename, or None if skipped."""
-        basename = os.path.basename(url.split('?')[0])
-        basename = urllib.parse.unquote(basename)
-        filename = f"{lang}_{year}_{basename}"
+        filename = self._staging_filename(url, year=year, lang=lang)
+        if filename is None:
+            print(f"⏭️  Skipping URL with no safe filename: {url}")
+            return None
 
         # Skip handout files before downloading
         if classify_file(filename) == "handout":
@@ -140,6 +161,12 @@ class BBTCScraper:
             return None
 
         staging_path = os.path.join(self._staging_dir, filename)
+        # Defence in depth: even if the sanitiser above is ever bypassed, never
+        # write outside the staging directory.
+        staging_root = os.path.realpath(self._staging_dir)
+        if not os.path.realpath(staging_path).startswith(staging_root + os.sep):
+            print(f"⚠️  Rejected unsafe staging path for {url}: {filename}")
+            return None
         if os.path.exists(staging_path):
             print(f"⏭️  Already in staging: {filename}")
             return filename
