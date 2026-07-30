@@ -25,11 +25,16 @@ import warnings
 from langgraph.warnings import LangGraphDeprecatedSinceV10
 warnings.filterwarnings("ignore", category=LangGraphDeprecatedSinceV10)
 import gradio as gr
+import html
 import os
 import subprocess
+import sys
 import time
 import urllib.request
+from pathlib import Path
 from dotenv import load_dotenv
+
+ROOT_DIR = Path(__file__).resolve().parent
 from src.storage.chroma_store import SermonVectorStore
 from src.llm import get_llm, get_chat_llm, GROQ_MODEL, GEMINI_MODEL, OLLAMA_CHAT_MODEL
 from src.ui_helpers import extract_chart_path, fetch_archive_stats, render_stats_bar
@@ -125,14 +130,108 @@ _ollama_up = _ensure_ollama()
 # ── Inference Engine options ─────────────────────────────────────────────────
 # Dropdown label → (provider, model). The label is also the stored dropdown value;
 # `_parse_selection` looks the tuple back up. First entry is the default engine.
-_LLM_OPTIONS = {
-    "qwen3.6:35b [local · fast · default]":  ("ollama", "qwen3.6:35b-mlx"),
-    "qwen3.5:122b [local · deep]":           ("ollama", "qwen3.5:122b-a10b-q4_K_M"),
-    "deepseek-v4-pro [local · RAG Q&A]":     ("ollama", "deepseek-v4-pro:cloud"),
+#
+# Local Ollama engines are discovered at startup from the running daemon
+# (`ollama list` / the /api/tags endpoint). Two filters apply:
+#   * capability — a model must expose the "tools" capability to drive the ReAct
+#     agent, which drops embedding-only models (e.g. bge-m3) without name-guessing.
+#   * parameter count — only local models with at least 30B parameters are kept
+#     (smaller local models are hidden). Cloud-hosted models (`remote_host`) run
+#     remotely and are always kept, regardless of size.
+# Labels show the model's parameter count (`details.parameter_size`, e.g. "31B",
+# else parsed from the model name), falling back to the on-disk GB only when no
+# count can be determined. Cloud models are labelled "[cloud]". Cloud API engines
+# (Gemini, Groq) are always appended.
+_OLLAMA_PARAM_MIN_B = 30.0  # min parameters (billions) to keep a local model
+# Preferred default engine. If this Ollama model is installed it is pinned to the
+# front of the dropdown (making it the default) and shown even if it falls below the
+# parameter gate. No effect if the model isn't present.
+_PINNED_MODEL = "qwen3.6:35b-mlx"
+
+
+def _param_billions(psize: str, name: str):
+    """Parameter count in billions, or ``None`` if it can't be determined.
+
+    Prefers Ollama's reported ``parameter_size`` (e.g. "5.1B", "158B", "2.81T");
+    for models that report none (some MLX builds), parses the size tag off the
+    model name (e.g. ``qwen3.6:35b-mlx`` → 35).
+    """
+    import re
+    m = re.match(r"([\d.]+)\s*([BMT])?", (psize or "").strip().upper())
+    if m and m.group(1):
+        try:
+            return float(m.group(1)) * {"B": 1.0, "T": 1000.0, "M": 0.001}[m.group(2) or "B"]
+        except (ValueError, KeyError):
+            pass
+    m = re.search(r"(\d+(?:\.\d+)?)\s*b\b", name.lower())
+    return float(m.group(1)) if m else None
+
+
+def _discover_ollama_models(param_min: float = _OLLAMA_PARAM_MIN_B,
+                            pinned: str = _PINNED_MODEL) -> dict:
+    """Query the local Ollama daemon for tool-capable chat models.
+
+    Returns an ordered ``label → ("ollama", model)`` map preserving Ollama's own
+    list order (so it mirrors ``ollama list``), except the ``pinned`` model is moved
+    to the front so it becomes the default engine. Skips models without the "tools"
+    capability (embedders can't drive the agent). Locally-stored models under
+    ``param_min`` billion parameters are hidden, but the pinned model is always
+    kept; cloud-hosted models are always kept. Empty if Ollama is unreachable or has
+    no qualifying models.
+    """
+    try:
+        import json
+        with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=3) as r:
+            models = json.loads(r.read()).get("models", [])
+    except Exception:
+        return {}
+    options = {}
+    for m in models:
+        name = m.get("name")
+        if not name:
+            continue
+        # Only tool-calling chat models can drive the ReAct agent (drops embedders).
+        if "tools" not in (m.get("capabilities") or []):
+            continue
+        is_cloud = bool(m.get("remote_host")) or name.endswith(":cloud")
+        psize = (m.get("details") or {}).get("parameter_size", "").strip().upper()
+        params_b = _param_billions(psize, name)
+        # Keep local models with at least the minimum parameter count. Cloud models
+        # run remotely and the pinned default are always kept; models whose size
+        # can't be determined are kept rather than silently dropped.
+        if (not is_cloud and name != pinned
+                and params_b is not None and params_b < param_min):
+            continue
+        # Display the parameter count when known; fall back to on-disk GB.
+        param_disp = psize or (f"{params_b:g}B" if params_b is not None else "")
+        if is_cloud:
+            label = f"{name} [cloud · {param_disp}]" if param_disp else f"{name} [cloud]"
+        elif param_disp:
+            label = f"{name} [local · {param_disp}]"
+        else:
+            label = f"{name} [local · {m.get('size', 0) / 1024**3:.1f} GB]"
+        options[label] = ("ollama", name)
+    # Pin the preferred default to the front so it becomes the default engine.
+    pinned_items = [(l, v) for l, v in options.items() if v[1] == pinned]
+    if pinned_items:
+        rest = [(l, v) for l, v in options.items() if v[1] != pinned]
+        options = dict(pinned_items + rest)
+    return options
+
+
+# Cloud engines — always available in the dropdown (require the relevant API key).
+_CLOUD_OPTIONS = {
     "Gemini 2.5 Flash [cloud · fast]":       ("gemini", "gemini-2.5-flash"),
     "Gemini 2.5 Pro [cloud · best]":         ("gemini", "gemini-2.5-pro"),
     "Groq [cloud]":                          ("groq",   GROQ_MODEL),
 }
+
+_LLM_OPTIONS = {**_discover_ollama_models(), **_CLOUD_OPTIONS}
+# Fallback: guarantee at least one local option if Ollama discovery returned
+# nothing (daemon down at startup), so the dropdown/default never break.
+if not any(p == "ollama" for p, _ in _LLM_OPTIONS.values()):
+    _LLM_OPTIONS = {f"{OLLAMA_CHAT_MODEL} [local]": ("ollama", OLLAMA_CHAT_MODEL),
+                    **_LLM_OPTIONS}
 
 _ENGINE_CHOICES = list(_LLM_OPTIONS.keys())
 _DEFAULT_SELECTION = _ENGINE_CHOICES[0]
@@ -320,6 +419,110 @@ _stats_bar_html = (
 )
 
 _ollama_status = "online" if _ollama_up else "offline"
+
+
+# ── "Update Archive" action ──────────────────────────────────────────────────
+# Header button that scrapes the current year's latest sermons and runs the
+# incremental ingest, then refreshes the stats bar. Both steps run as isolated
+# subprocesses (mirroring `make scrape` / `make ingest`) so the scraper's network
+# work and the ingest's heavy model loading stay out of the live Gradio process.
+# Caveat: the ingest subprocess writes to `data/chroma_db` while this process still
+# holds a ChromaDB client on the same path. Chroma has no first-class support for
+# concurrent multi-process access, so treat "Update Archive" as an occasional
+# maintenance action, not something to fire while the chat is under heavy use. The
+# app's in-memory vector index also won't include the new chunks until a restart
+# (SQLite-backed stats do refresh live) — the done message flags this.
+def _update_status_html(state: str, msg: str) -> str:
+    colors = {
+        "running": ("#92400e", "#fef3c7", "#fcd34d"),
+        "done":    ("#166534", "#dcfce7", "#4ade80"),
+        "error":   ("#7f1d1d", "#fee2e2", "#f87171"),
+        "idle":    ("var(--c-text-2)", "transparent", "transparent"),
+    }
+    fg, bg, bd = colors.get(state, colors["idle"])
+    if not msg:
+        return ""
+    spinner = "⏳ " if state == "running" else ""
+    # `msg` embeds subprocess output (scraper/ingest lines derived from the remote
+    # site), so escape it before it lands in this raw-HTML component.
+    return (
+        f"<div style='margin-top:8px;padding:6px 10px;border-radius:6px;"
+        f"background:{bg};border:1px solid {bd};color:{fg};"
+        f"font-family:\"Source Code Pro\",monospace;font-size:0.72rem;line-height:1.4;'>"
+        f"{spinner}{html.escape(msg)}</div>"
+    )
+
+
+def _run_subprocess(args: list[str], phase: str) -> tuple[bool, str]:
+    """Run a pipeline step as a subprocess. Returns (ok, tail) where tail is the
+    last non-empty output line (for status) or an error excerpt on failure."""
+    try:
+        proc = subprocess.run(
+            args, cwd=str(ROOT_DIR), capture_output=True, text=True, timeout=1800
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"{phase} timed out after 30 min."
+    out = (proc.stdout or "") + (proc.stderr or "")
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    tail = lines[-1] if lines else ""
+    if proc.returncode != 0:
+        return False, tail or f"{phase} exited with code {proc.returncode}."
+    return True, tail
+
+
+def _run_archive_update():
+    """Generator: scrape latest sermons → incremental ingest → refresh stats.
+
+    Yields ``(status_html, stats_html, button_update)`` tuples so the header button
+    disables itself and the status line advances through each phase live. The whole
+    body is guarded so any unexpected error still re-enables the button rather than
+    leaving it stuck in the "⏳ Updating…" state.
+
+    Note on freshness: the stats bar reads SQLite fresh on every call, so it reflects
+    new sermons immediately. The chat agent's semantic search does NOT — it holds a
+    ChromaDB collection loaded in memory at startup and won't see chunks written by
+    the ingest subprocess until the app is restarted. The done message says so.
+    """
+    from datetime import date
+    disabled = gr.update(interactive=False, value="⏳ Updating…")
+    enabled = gr.update(interactive=True, value="⟳ Update Archive")
+
+    if registry is None:
+        yield (_update_status_html("error", "Archive is offline — cannot update."),
+               gr.update(), enabled)
+        return
+
+    try:
+        year = date.today().year
+
+        # 1) Scrape the current year (incremental — the scraper skips pages/files it
+        #    already has via its per-page manifests).
+        yield (_update_status_html("running", f"Scraping {year} sermons from bbtc.com.sg…"),
+               gr.update(), disabled)
+        ok, tail = _run_subprocess(
+            [sys.executable, "src/scraper/bbtc_scraper.py", str(year)], "Scrape")
+        if not ok:
+            yield (_update_status_html("error", f"Scrape failed: {tail}"), gr.update(), enabled)
+            return
+
+        # 2) Incremental ingest of any newly staged NG/PS files.
+        yield (_update_status_html("running", "Ingesting new sermons (extract + embed)…"),
+               gr.update(), disabled)
+        ok, tail = _run_subprocess([sys.executable, "ingest.py"], "Ingest")
+        if not ok:
+            yield (_update_status_html("error", f"Ingest failed: {tail}"), gr.update(), enabled)
+            return
+
+        # 3) Refresh the header stats bar from SQLite (always reflects the latest DB).
+        stats_html = render_stats_bar(fetch_archive_stats(registry.db_path))
+        summary = tail or "Archive updated."
+        # Only nudge to restart when the ingest actually added something — the agent's
+        # in-memory vector index won't include new chunks until the app is restarted.
+        if "nothing new" not in summary.lower():
+            summary += " — restart the app for chat search to include new sermons."
+        yield (_update_status_html("done", f"Done — {summary}"), stats_html, enabled)
+    except Exception as e:  # never leave the button stuck disabled
+        yield (_update_status_html("error", f"Update failed: {e}"), gr.update(), enabled)
 
 
 def _inference_badge_html(selection: str) -> str:
@@ -561,6 +764,21 @@ body { background: var(--c-bg) !important; }
     margin-bottom: 12px;
 }
 #title-container img { height: 36px; opacity: 0.85; }
+/* Header "Update Archive" action */
+#update-col { display: flex; flex-direction: column; justify-content: center; margin-bottom: 12px; }
+#update-btn {
+    font-family: 'Source Code Pro', monospace !important;
+    font-size: 0.78rem !important;
+    font-weight: 600 !important;
+    border: 1px solid var(--c-accent) !important;
+    color: var(--c-accent-active) !important;
+    background: var(--c-accent-soft) !important;
+    border-radius: 6px !important;
+    padding: 10px 12px !important;
+    transition: filter 0.12s ease !important;
+}
+#update-btn:hover:not([disabled]) { filter: brightness(0.95) !important; }
+#update-btn[disabled] { opacity: 0.65 !important; cursor: not-allowed !important; }
 #title-text h1 {
     font-family: 'Source Code Pro', monospace;
     font-size: 1.4rem;
@@ -886,8 +1104,19 @@ with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
                     </div>
                 </div>
             """)
+        with gr.Column(scale=1, min_width=170, elem_id="update-col"):
+            update_btn = gr.Button(
+                "⟳ Update Archive", variant="secondary",
+                elem_id="update-btn", min_width=170,
+            )
+            gr.HTML(
+                "<p style='margin:6px 2px 0;font-size:0.64rem;line-height:1.4;"
+                "color:var(--c-text-3);font-family:\"Source Code Pro\",monospace;'>"
+                "Scrapes this year's latest sermons &amp; ingests new ones.</p>"
+            )
 
-    gr.HTML(_stats_bar_html)
+    stats_bar = gr.HTML(_stats_bar_html)
+    update_status = gr.HTML("")
 
     with gr.Row():
         with gr.Column(scale=3):
@@ -974,6 +1203,12 @@ with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
         outputs=[provider_state, inference_status],
     )
 
+    update_btn.click(
+        _run_archive_update,
+        inputs=None,
+        outputs=[update_status, stats_bar, update_btn],
+    )
+
     def user_msg(user_message, history: list):
         if history is None:
             history = []
@@ -1033,20 +1268,25 @@ with gr.Blocks(title="BBTC Sermon Intelligence") as demo:
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 0)) or None
-    # Auth is opt-in via env vars. The UI binds 0.0.0.0 (LAN-reachable), so set
-    # GRADIO_USERNAME / GRADIO_PASSWORD to gate access when on a shared network.
-    # When unset, launch without auth (zero-config for localhost use) but warn.
+    # Auth is opt-in via env vars: set GRADIO_USERNAME / GRADIO_PASSWORD to gate
+    # access. Secure default for the network binding — only expose to the LAN
+    # (0.0.0.0) when auth is configured, otherwise bind loopback (127.0.0.1) so an
+    # un-authenticated instance isn't reachable by other hosts (the "Update
+    # Archive" button triggers scrape/ingest, so an open bind is more than a
+    # read-only chat). GRADIO_SERVER_NAME can override the host explicitly.
     auth_user = os.getenv("GRADIO_USERNAME")
     auth_pass = os.getenv("GRADIO_PASSWORD")
     auth_creds = (auth_user, auth_pass) if (auth_user and auth_pass) else None
-    if auth_creds is None:
+    default_host = "0.0.0.0" if auth_creds else "127.0.0.1"
+    server_name = os.getenv("GRADIO_SERVER_NAME", default_host)
+    if server_name != "127.0.0.1" and auth_creds is None:
         print(
-            "⚠️  Gradio UI binding 0.0.0.0 with no auth — reachable from your LAN. "
+            f"⚠️  Gradio UI binding {server_name} with no auth — reachable from your LAN. "
             "Set GRADIO_USERNAME and GRADIO_PASSWORD in .env to gate access.",
             flush=True,
         )
     demo.launch(
-        server_name="0.0.0.0",
+        server_name=server_name,
         server_port=port,
         auth=auth_creds,
         theme=gr.themes.Default(),
