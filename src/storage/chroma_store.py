@@ -39,6 +39,14 @@ _MLX_DEFAULT_MODELS = {
     "mlx_qwen": "mlx-community/Qwen3-Embedding-8B-4bit-DWQ",
 }
 
+# Distance metric for both collections. BGE-M3 (and the MLX variants) are trained
+# for COSINE similarity; Chroma's default is squared-L2, which ranks unnormalised
+# embeddings differently and degrades retrieval. The space is baked in at collection
+# creation — a collection built before this default (on l2) is NOT silently upgraded
+# by passing this metadata to get_or_create; migrate it in place, preserving the
+# stored vectors, with `python scripts/migrate_chroma_cosine.py`.
+_DISTANCE_SPACE = "cosine"
+
 
 class _MLXEmbedder:
     """Adapter exposing a sentence-transformers-style `.encode()` over mlx_embeddings."""
@@ -64,8 +72,34 @@ class SermonVectorStore:
         os.makedirs(persist_dir, exist_ok=True)
         self._client = chromadb.PersistentClient(path=persist_dir)
         self._embeddings = embeddings  # None → lazy-init on first use per EMBED_BACKEND
-        self._sermons = self._client.get_or_create_collection("sermon_collection")
-        self._bible = self._client.get_or_create_collection("bible_collection")
+        _space = {"hnsw:space": _DISTANCE_SPACE}
+        self._sermons = self._client.get_or_create_collection("sermon_collection", metadata=_space)
+        self._bible = self._client.get_or_create_collection("bible_collection", metadata=_space)
+        self._check_distance_space()
+
+    def _check_distance_space(self):
+        """Fail fast if an existing non-empty collection uses a distance space other
+        than ``_DISTANCE_SPACE``. Chroma bakes ``hnsw:space`` in at creation time and
+        silently ignores a different ``metadata`` passed to ``get_or_create``, so a
+        collection built before the cosine switch stays on l2 — quietly degrading
+        BGE-M3 retrieval. Cheap (reads config + count, no model load), so it runs in
+        ``__init__``. Empty collections are skipped so a fresh DB never trips it.
+        """
+        for coll in (self._sermons, self._bible):
+            try:
+                if coll.count() == 0:
+                    continue
+                cfg = getattr(coll, "configuration_json", None) or {}
+                space = (cfg.get("hnsw") or {}).get("space")
+            except Exception:
+                continue  # config unreadable on this Chroma build → don't block
+            if space and space != _DISTANCE_SPACE:
+                raise RuntimeError(
+                    f"Collection '{coll.name}' uses distance space '{space}', but this "
+                    f"build expects '{_DISTANCE_SPACE}' (BGE-M3 is trained for cosine). "
+                    f"Migrate the existing vectors in place (no re-embedding needed):\n"
+                    f"    python scripts/migrate_chroma_cosine.py"
+                )
 
     def _ensure_embeddings(self):
         if self._embeddings is not None:

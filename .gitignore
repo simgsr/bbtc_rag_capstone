@@ -22,6 +22,9 @@ env/
 data/**
 !data/**/
 !data/**/.gitkeep
+# Transient migration backups (scripts/migrate_chroma_cosine.py) — dir + contents,
+# overrides the .gitkeep re-include above so a copied backup can't be tracked.
+data/*.bak/
 models/
 .dagster_home/
 .tmp_dagster_home_*/
