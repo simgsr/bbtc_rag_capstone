@@ -23,13 +23,13 @@ Required Ollama models:
   - default: `gemma4:latest` (9.6 GB); high-spec 96 GB+ RAM: `qwen3.5:122b`; 32 GB: `gemma4:31b`
   - Ollama context window: `OLLAMA_NUM_CTX` (default `32768`) — Ollama's own default is 2048, too small for ReAct + 3-exchange history.
 
-**Chat LLM (Gradio agent)** — picked at runtime via the "Inference Engine" dropdown. The dropdown's option list is defined by `_LLM_OPTIONS` in `app.py` (a `label → (provider, model)` map); the first entry is the default engine and each label carries its own explicit model, so switching engines never falls back to an env default. Current options:
-  - `qwen3.6:35b-mlx` — Ollama, local, **default**
-  - `qwen3.5:122b-a10b-q4_K_M` — Ollama, local, deep
-  - `deepseek-v4-pro:cloud` — Ollama, local, RAG Q&A
-  - `gemini-2.5-flash` / `gemini-2.5-pro` — Gemini, cloud (set `GOOGLE_API_KEY`)
-  - Groq — cloud, uses `GROQ_MODEL` (set `GROQ_API_KEY`)
-- `ollama` backend — `ChatOllama` is constructed with `timeout=600` (raised from 120s) so large models like `qwen3.5:122b` / `deepseek-v4-pro:cloud` don't time out on long generations, and with explicit `seed`/`top_k`/`top_p`/`repeat_penalty` overrides (env-overridable: `OLLAMA_SEED`/`OLLAMA_TOP_K`/`OLLAMA_TOP_P`/`OLLAMA_REPEAT_PENALTY`) so per-model Modelfile sampling defaults don't silently control generation. To add/change/reorder engines, edit `_LLM_OPTIONS` only — the dropdown, badge, and cache all derive from it.
+**Chat LLM (Gradio agent)** — picked at runtime via the "Inference Engine" dropdown. The option list (`_LLM_OPTIONS` in `app.py`, a `label → (provider, model)` map) is built at **startup**: local Ollama engines are auto-discovered via `_discover_ollama_models()` (queries `/api/tags`, i.e. `ollama list`) and the static cloud engines in `_CLOUD_OPTIONS` are appended. The first entry is the default engine and each label carries its own explicit model, so switching engines never falls back to an env default. Discovery rules:
+  - **Order** mirrors `ollama list` (most-recently-modified first), except `_PINNED_MODEL` (default `qwen3.6:35b-mlx`) is moved to the front so it is the default engine and gets pre-warmed at startup (the pin also exempts it from the parameter gate below).
+  - **Capability filter** — a model must expose the `"tools"` capability, which drops embedding-only models (e.g. `bge-m3`) without name-guessing.
+  - **Parameter filter** — only locally-stored models with at least `_OLLAMA_PARAM_MIN_B` (30B parameters) are kept; smaller local models are hidden. The count comes from `details.parameter_size`, or is parsed from the model name (`_param_billions`) when Ollama reports none (some MLX builds). Cloud-hosted Ollama models (`remote_host` / `:cloud`) run remotely and are always kept, as is the pinned model. Models whose count can't be determined are kept, not dropped.
+  - **Labels** show the parameter count (`details.parameter_size`, else parsed from the name, e.g. `35B`), falling back to on-disk GB only when no count is available; cloud-hosted models are labelled `[cloud]`.
+  - Static cloud engines always appended: `gemini-2.5-flash` / `gemini-2.5-pro` (Gemini, set `GOOGLE_API_KEY`) and Groq (`GROQ_MODEL`, set `GROQ_API_KEY`). A fallback prepends `OLLAMA_CHAT_MODEL` if discovery found no Ollama chat models (daemon down at startup).
+- `ollama` backend — `ChatOllama` is constructed with `timeout=600` (raised from 120s) so large models don't time out on long generations, and with explicit `seed`/`top_k`/`top_p`/`repeat_penalty` overrides (env-overridable: `OLLAMA_SEED`/`OLLAMA_TOP_K`/`OLLAMA_TOP_P`/`OLLAMA_REPEAT_PENALTY`) so per-model Modelfile sampling defaults don't silently control generation. To change the minimum parameter count, pinned default, or cloud engines, edit `_OLLAMA_PARAM_MIN_B` / `_PINNED_MODEL` / `_CLOUD_OPTIONS`; the local list is discovered, not hardcoded. The badge and cache all derive from `_LLM_OPTIONS`.
 - Agents/LLMs are cached per **`(provider, model)`** key (not per provider) so distinct Ollama models don't collide. The default engine's agent graph is pre-warmed at startup (Ollama/cloud clients construct lazily, so no weights load then).
 - MLX chat (`mlx_lm.server` + `ChatOpenAI`) remains implemented in `src/llm.py` but is **not** listed in the dropdown; MLX is still the default **ingest** backend (below).
 
@@ -128,6 +128,7 @@ Gradio UI
 | `run_pipeline` | `ingest.py` | Orchestrates full classify→group→extract→embed |
 | `dagster_pipeline.py` | root | Weekly Saturday schedule wrapping `ingest.py` |
 | `app.py` | root | Gradio UI + LangGraph ReAct agent |
+| `_run_archive_update` | `app.py` | Header **"Update Archive"** button handler: a generator that scrapes the current year (`bbtc_scraper.py <year>`) then runs the incremental `ingest.py`, each as an isolated subprocess (mirrors `make scrape` / `make ingest`), advancing a live status line and refreshing the header stats bar. Subprocesses keep the scraper's network work and the ingest's model loading out of the Gradio process. **Freshness caveat:** the stats bar reads SQLite fresh each call so it reflects new sermons immediately, but the chat agent's semantic search does **not** — it holds a ChromaDB collection loaded in memory at startup and won't see chunks written by the ingest subprocess until the app restarts (the done message says so). Also note the ingest subprocess writes to `data/chroma_db` while this process holds a client on the same path; Chroma has no first-class concurrent-multi-process support, so treat this as an occasional maintenance action. The body is wrapped so any error re-enables the button instead of leaving it stuck on "⏳ Updating…" |
 
 ### Agent Tools
 
@@ -188,17 +189,19 @@ book_aliases(
 
 ### ChromaDB
 
+Both collections use **cosine** distance (`hnsw:space="cosine"`, set at creation in `SermonVectorStore.__init__`) — BGE-M3 is trained for cosine, and Chroma's default squared-L2 ranks unnormalised embeddings worse. The space is baked in at creation and NOT upgraded by re-opening with new metadata; collections built before this default stay on l2. `_check_distance_space()` (in `__init__`) raises a clear `RuntimeError` on any non-empty l2 collection, pointing to `scripts/migrate_chroma_cosine.py`, which converts in place **preserving the stored vectors** (no re-embedding / no LLM — the metric is a query-time function, the vectors are identical) with a filesystem backup for rollback.
+
 **`sermon_collection`**
 - Chunks: NG body text (800/150) + LLM summary (single chunk) + a `doc_type="metadata"` title chunk ("Topic | Theme | Speaker | Key verse | Date") per sermon
 - Metadata per chunk: `{sermon_id, doc_type, speaker, date, year, topic, theme, language, key_verse}`
-- Embeddings: `BGE-M3` via the configured `EMBED_BACKEND` (see Embeddings section)
+- Embeddings: `BGE-M3` via the configured `EMBED_BACKEND` (see Embeddings section); cosine distance
 
 **`bible_collection`**
 - ~213,000 chunks across **7 translations**: KJV, ASV, YLT, BBE (Basic English), ChiUn (Chinese Union — Chinese text), NIV, ESV
 - Sources: KJV, ASV, YLT, BBE, ChiUn from Scrollmapper JSON (public domain); NIV, ESV from local EPUB files
 - Metadata per chunk: `{book, chapter, verse, version, reference}`
 - IDs: `{VERSION}_{Book} {chapter}:{verse}` (e.g. `NIV_John 3:16`)
-- Embeddings: `BGE-M3` via the configured `EMBED_BACKEND` (see Embeddings section)
+- Embeddings: `BGE-M3` via the configured `EMBED_BACKEND` (see Embeddings section); cosine distance
 - Note: `ChiUn` is Chinese. `search_bible_tool` takes an optional `version` filter; for English topic queries pass an English version (e.g. `NIV`) to avoid Chinese verses surfacing. `get_bible_versions_tool` returns all 7 versions of a verse — only include ChiUn when Chinese is wanted.
 
 ## Notable Quirks
@@ -207,6 +210,7 @@ book_aliases(
 - **`search_sermons_tool` speaker filter is partial-match** (`src/tools/vector_tool.py`): Chroma metadata `where` is exact-match only, but speakers carry titles ("SP Chua Seng Lee"), so the speaker filter is applied by fetching the **whole collection** (`k = counts()["sermon_collection"]`, bounded by any year/min/max `where` clause inside Chroma) then case-insensitive substring post-filtering, not via a `where` clause. Fetching all (rather than a fixed 4× oversample) guarantees a prolific speaker on a rare topic still fills `k` — e.g. SP Daniel Foo has 110 sermons; a niche query could have none of his in a 4× window. Cost is just an in-memory Chroma scan since `_search` embeds the query only once regardless of `n_results`. Year/min_year/max_year still use `where`.
 - **`.env` is loaded in `chroma_store.py`** (not just `app.py` / `src/llm.py`) so every entry point that touches the vector store — `ingest.py`, `backfill_title_chunks.py`, the eval harness — resolves `EMBED_BACKEND` identically. Without this, a standalone script would fall back to `st` and silently mix embedding backends within a collection (same dim → the dim guard below wouldn't catch it → degraded retrieval).
 - **Embedding-dim guard** (`SermonVectorStore._check_vector_dim_alignment`): on first `_embed`, compares the current embedder's output dim against what's stored in each non-empty collection and raises a clear `RuntimeError` on mismatch (the `EMBED_BACKEND`-switched-without-wipe footgun). Runs once per process. It catches dimension changes (e.g. `st` 1024 → `mlx_qwen` 4096); it does NOT catch same-dim backend swaps (e.g. `st` ↔ `mlx_bge`, both 1024) — those are prevented by the `.env`-loading rule above.
+- **Distance-space guard** (`SermonVectorStore._check_distance_space`): runs in `__init__` (cheap — reads `configuration_json` + `count()`, no model load). Both collections are created with `hnsw:space="cosine"`; if a pre-existing non-empty collection is still on Chroma's default `l2`, it raises a clear `RuntimeError` pointing to `scripts/migrate_chroma_cosine.py`. This exists because Chroma silently ignores the cosine `metadata` on `get_or_create` for a collection that already exists on l2 — so without the guard the cosine switch would be a silent no-op on old data. The migration converts in place, reusing the stored embeddings (metric is a query-time function; no re-embed / no LLM / no re-scrape), after taking a `data/chroma_db.pre-cosine.<ts>.bak` filesystem backup.
 - **Ollama sampling overrides** (`src/llm.py:get_llm`): `ChatOllama` is constructed with explicit `seed`/`top_k`/`top_p`/`repeat_penalty` (env-overridable: `OLLAMA_SEED`, `OLLAMA_TOP_K`, `OLLAMA_TOP_P`, `OLLAMA_REPEAT_PENALTY`) so per-model Modelfile defaults (some ship `temperature=1` / `presence_penalty=1.5`) don't silently control generation. `temperature` is forwarded from the caller. `presence_penalty` / `min_p` are NOT exposed by `ChatOllama` (config `extra='ignore'`) — to neutralise those, edit the Modelfile directly (`ollama show --modelfile X > MF; ollama create -q`).
 
 ## RAG Evaluation Harness
