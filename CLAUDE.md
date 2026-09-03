@@ -1,247 +1,60 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working in this repo. The full architecture, DB schema, and component map are derivable from the code (every module has a docstring; README.md has the overview) — this file keeps only what you can't reconstruct by reading. Everyday commands live in the Makefile and README.
 
 ## Project Overview
 
-**Hybrid Agentic RAG pipeline** for the BBTC (Bethesda Bedok-Tampines Church) sermon archive.
-
-Scrapes sermon documents from the BBTC website, groups them into **sermon units** (one Notes/Guide + one Slides/PPT per Sunday), extracts structured metadata, stores in SQLite + ChromaDB, and exposes a Gradio chat interface backed by a LangGraph ReAct agent.
+**Hybrid Agentic RAG pipeline** for the BBTC (Bethesda Bedok-Tampines Church) sermon archive: scrapes sermon PDFs, groups them into **sermon units** (one Notes/Guide + one Slides/PPT per Sunday), extracts metadata, stores in SQLite + ChromaDB, and serves a Gradio chat UI backed by a LangGraph ReAct agent.
 
 ## Environment Setup
 
-```bash
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env  # optional: GROQ_API_KEY, GEMINI_API_KEY for cloud fallback
-```
-
-Ollama must be running locally: `ollama serve`
-
-Required Ollama models:
-- Chat LLM only — configurable via `OLLAMA_CHAT_MODEL` in `.env`:
-  - default: `gemma4:latest` (9.6 GB); high-spec 96 GB+ RAM: `qwen3.5:122b`; 32 GB: `gemma4:31b`
-  - Ollama context window: `OLLAMA_NUM_CTX` (default `32768`) — Ollama's own default is 2048, too small for ReAct + 3-exchange history.
-
-**Chat LLM (Gradio agent)** — picked at runtime via the "Inference Engine" dropdown. The option list (`_LLM_OPTIONS` in `app.py`, a `label → (provider, model)` map) is built at **startup**: local Ollama engines are auto-discovered via `_discover_ollama_models()` (queries `/api/tags`, i.e. `ollama list`) and the static cloud engines in `_CLOUD_OPTIONS` are appended. The first entry is the default engine and each label carries its own explicit model, so switching engines never falls back to an env default. Discovery rules:
-  - **Order** mirrors `ollama list` (most-recently-modified first), except `_PINNED_MODEL` (default `qwen3.6:35b-mlx`) is moved to the front so it is the default engine and gets pre-warmed at startup (the pin also exempts it from the parameter gate below).
-  - **Capability filter** — a model must expose the `"tools"` capability, which drops embedding-only models (e.g. `bge-m3`) without name-guessing.
-  - **Parameter filter** — only locally-stored models with at least `_OLLAMA_PARAM_MIN_B` (30B parameters) are kept; smaller local models are hidden. The count comes from `details.parameter_size`, or is parsed from the model name (`_param_billions`) when Ollama reports none (some MLX builds). Cloud-hosted Ollama models (`remote_host` / `:cloud`) run remotely and are always kept, as is the pinned model. Models whose count can't be determined are kept, not dropped.
-  - **Labels** show the parameter count (`details.parameter_size`, else parsed from the name, e.g. `35B`), falling back to on-disk GB only when no count is available; cloud-hosted models are labelled `[cloud]`.
-  - Static cloud engines always appended: `gemini-2.5-flash` / `gemini-2.5-pro` (Gemini, set `GOOGLE_API_KEY`) and Groq (`GROQ_MODEL`, set `GROQ_API_KEY`). A fallback prepends `OLLAMA_CHAT_MODEL` if discovery found no Ollama chat models (daemon down at startup).
-- `ollama` backend — `ChatOllama` is constructed with `timeout=600` (raised from 120s) so large models don't time out on long generations, and with explicit `seed`/`top_k`/`top_p`/`repeat_penalty` overrides (env-overridable: `OLLAMA_SEED`/`OLLAMA_TOP_K`/`OLLAMA_TOP_P`/`OLLAMA_REPEAT_PENALTY`) so per-model Modelfile sampling defaults don't silently control generation. To change the minimum parameter count, pinned default, or cloud engines, edit `_OLLAMA_PARAM_MIN_B` / `_PINNED_MODEL` / `_CLOUD_OPTIONS`; the local list is discovered, not hardcoded. The badge and cache all derive from `_LLM_OPTIONS`.
-- Agents/LLMs are cached per **`(provider, model)`** key (not per provider) so distinct Ollama models don't collide. The default engine's agent graph is pre-warmed at startup (Ollama/cloud clients construct lazily, so no weights load then).
-- MLX chat (`mlx_lm.server` + `ChatOpenAI`) remains implemented in `src/llm.py` but is **not** listed in the dropdown; MLX is still the default **ingest** backend (below).
-
-**Ingest LLM** — controlled by `INGEST_PROVIDER` in `.env`:
-- `mlx` (default, Apple Silicon): uses `MLX_INGEST_MODEL` (default `mlx-community/Qwen3-4B-4bit`); model auto-downloads from HuggingFace on first run
-- `ollama_local`: uses `OLLAMA_INGEST_MODEL` (default `gemma4:latest`); causes Ollama model-swap with BGE-M3 — slower
-- `groq` / `gemini`: cloud fallbacks — set `GROQ_API_KEY` or `GOOGLE_API_KEY`
-
-**Embeddings** — selected via `EMBED_BACKEND` in `.env` (default `st`). No Ollama required. Model auto-downloads from HuggingFace on first run. Switching backends changes the vector space (and possibly the dimension) — you must wipe + re-ingest both collections (`ingest.py --wipe` and `bible_ingest.py --wipe`) so stored and query vectors match.
-- `st` (default): BAAI/bge-m3 via `sentence-transformers` on MPS (fp32), 1024-dim
-- `mlx_bge`: `mlx-community/bge-m3-mlx-fp16` via `mlx-embeddings` (Apple Silicon), 1024-dim — ~2x faster than `st`, ~3 GB RAM; drop-in (same dim/quality)
-- `mlx_qwen`: `mlx-community/Qwen3-Embedding-8B-4bit-DWQ`, 4096-dim — higher MTEB but ~5x slower on ingest and 4x storage; overkill for this corpus. `MLX_EMBED_MODEL` overrides the repo, `MLX_EMBED_MAX_LEN` the token cap (default 1024) for `mlx_*` backends.
-
-## Running the Application
-
-```bash
-# Launch Gradio chat UI
-python app.py
-
-# Full ingest from scratch (wipe + rebuild)
-python ingest.py --wipe
-
-# Incremental ingest (new files only)
-python ingest.py
-
-# Ingest a specific year
-python ingest.py --year 2024
-
-# Dagster web UI (weekly scheduler)
-DAGSTER_HOME=$(pwd)/.dagster dagster dev -m dagster_pipeline
-
-# Scrape a single year from BBTC website
-python src/scraper/bbtc_scraper.py 2024
-
-# Ingest all Bible translations (KJV, ASV, YLT, BBE, ChiUn, NIV, ESV)
-python -m src.ingestion.bible.bible_ingest
-
-# Wipe and re-ingest bible_collection
-python -m src.ingestion.bible.bible_ingest --wipe
-
-# Ingest specific translations only
-python -m src.ingestion.bible.bible_ingest --versions KJV WEB NIV
-```
+- Ollama must be running: `ollama serve`. Chat + ingest LLMs run on Ollama; embeddings run on Apple Silicon (MPS) without Ollama.
+- **Chat LLM** — picked at runtime via the "Inference Engine" dropdown in `app.py`. The list is built at startup: local Ollama models are auto-discovered (`_discover_ollama_models()`, queries `/api/tags`), filtered to tool-capable models ≥30B params (`_OLLAMA_PARAM_MIN_B`), with `_PINNED_MODEL` (default `qwen3.8:latest`) pinned to the front as the default engine; static cloud engines (Gemini, Groq) are appended. To change the default/pin/min-params/cloud engines, edit `_PINNED_MODEL` / `_OLLAMA_PARAM_MIN_B` / `_CLOUD_OPTIONS` in `app.py` — the local list is discovered, not hardcoded. Agents/LLMs are cached per `(provider, model)`.
+- **Ingest LLM** — `INGEST_PROVIDER` in `.env`: `ollama_local` (default; uses `OLLAMA_INGEST_MODEL`, same model as chat so no model-swap) · `mlx` (faster but less stable — kept as an option, not the default) · `groq`/`gemini` (cloud fallbacks).
+- **Embeddings** — `EMBED_BACKEND` in `.env` (default `st` = BAAI/bge-m3 via sentence-transformers on MPS, 1024-dim). **Switching backends changes the vector space — you must wipe + re-ingest both collections** (`ingest.py --wipe` and `bible_ingest.py --wipe`) so stored and query vectors match.
 
 ## Architecture
 
 ### Sermon Unit Model
 
-Every weekend (Sat/Sun), BBTC posts two files:
-- **NG** (Notes/Guide): PDF with labeled fields `TOPIC`, `SPEAKER`, `THEME`, `DATE` + body text
-- **PS** (Slides/PPT): PDF exported from PowerPoint; filename encodes the key verse
-
-Together they form one **sermon unit** — the atomic unit of ingestion.
-
-### Data Flow
-
-```
-BBTC Website → BBTCScraper (classify-before-download: skip handouts)
-    ↓
-data/staging/  (NG + PS files only)
-    ↓
-ingest.py
-  ├── CLASSIFY  (file_classifier.py)  → ng | ps | handout
-  ├── GROUP     (sermon_grouper.py)   → SermonGroup(ng, ps[])
-  ├── EXTRACT   (ng_extractor.py)     → TOPIC/SPEAKER/THEME/DATE via regex
-  │             (ps_extractor.py)     → verses from filename + LLM on text
-  ├── SUMMARIZE (MLX or Ollama LLM)   → unified NG+PS summary
-  └── EMBED     (chroma_store.py)     → BGE-M3 → sermon_collection
-    ↓
-SQLite (data/sermons.db)  ← structured metadata + verses table
-ChromaDB (data/chroma_db/) ← body chunks (800/150) + summary chunk per sermon
-    ↓
-LangGraph ReAct Agent (3 tools)
-    ↓
-Gradio UI
-```
-
-### Key Components
-
-| Component | File | Purpose |
-|---|---|---|
-| `SermonRegistry` | `src/storage/sqlite_store.py` | SQLite CRUD; sermons + verses tables |
-| `SermonVectorStore` | `src/storage/chroma_store.py` | ChromaDB with lazy-initialized BGE-M3 embeddings |
-| `BBTCScraper` | `src/scraper/bbtc_scraper.py` | Cloudflare-bypass scraper; classify-before-download |
-| `classify_file` | `src/ingestion/file_classifier.py` | Returns `ng` \| `ps` \| `handout` |
-| `group_sermon_files` | `src/ingestion/sermon_grouper.py` | Pairs NG+PS by date proximity/topic overlap |
-| `extract_ng_metadata` | `src/ingestion/ng_extractor.py` | Regex on labeled fields; filename fallback |
-| `parse_verses_from_filename` | `src/ingestion/ps_extractor.py` | Verse regex on PS filenames |
-| `normalize_book` | `src/storage/normalize_book.py` | Canonical 66-book name normalization |
-| `ingest_bible` | `src/ingestion/bible/bible_ingest.py` | Fetches Scrollmapper JSON + parses EPUBs → `bible_collection` |
-| `BibleEpubParser` | `src/ingestion/bible/epub_parser.py` | Extracts verse-by-verse text from NIV/ESV EPUB files |
-| `make_bible_tool` | `src/tools/bible_tool.py` | `get_bible_versions_tool` + `search_bible_tool` for the agent |
-| `MLXChatModel` / `get_ingest_llm` | `src/llm.py` | MLX-backed LangChain chat model (text-only, used for ingest); `get_ingest_llm()` reads `INGEST_PROVIDER` to select backend |
-| `get_chat_llm` / `_ensure_mlx_server` | `src/llm.py` | Chat-agent LLM factory; forwards the selected `model` to `get_llm` for `ollama`/`groq`/`gemini` (so each dropdown engine uses its own model). For `provider="mlx"` lazily spawns `mlx_lm.server` and returns `ChatOpenAI` (native tool-calling). Cleanup via `atexit` + `SIGTERM`/`SIGINT`/`SIGHUP` registered at module load (main thread). `mlx_lm.server` stdout/stderr stream to the parent terminal at `INFO` level for debugging |
-| `_ensure_ollama` / `_shutdown_ollama` | `app.py` | Tracks `ollama serve` subprocess if we spawned it; cleanup only fires for self-spawned daemons (never touches a pre-existing system `ollama serve`). Same signal coverage as MLX |
-| `run_pipeline` | `ingest.py` | Orchestrates full classify→group→extract→embed |
-| `dagster_pipeline.py` | root | Weekly Saturday schedule wrapping `ingest.py` |
-| `app.py` | root | Gradio UI + LangGraph ReAct agent |
-| `_run_archive_update` | `app.py` | Header **"Update Archive"** button handler: a generator that scrapes the current year (`bbtc_scraper.py <year>`) then runs the incremental `ingest.py`, each as an isolated subprocess (mirrors `make scrape` / `make ingest`), advancing a live status line and refreshing the header stats bar. Subprocesses keep the scraper's network work and the ingest's model loading out of the Gradio process. **Freshness caveat:** the stats bar reads SQLite fresh each call so it reflects new sermons immediately, but the chat agent's semantic search does **not** — it holds a ChromaDB collection loaded in memory at startup and won't see chunks written by the ingest subprocess until the app restarts (the done message says so). Also note the ingest subprocess writes to `data/chroma_db` while this process holds a client on the same path; Chroma has no first-class concurrent-multi-process support, so treat this as an occasional maintenance action. The body is wrapped so any error re-enables the button instead of leaving it stuck on "⏳ Updating…" |
+Every weekend BBTC posts two files that form one **sermon unit** (the atomic unit of ingestion):
+- **NG** (Notes/Guide): PDF with labeled `TOPIC`, `SPEAKER`, `THEME`, `DATE` fields + body text
+- **PS** (Slides/PPT): PDF whose filename encodes the key verse
 
 ### Agent Tools
 
-- **`sql_query_tool`** — SQL against `data/sermons.db`; use for counts, lists, verse aggregations, and **gap/coverage analysis** ("books never preached") via an anti-join against the `bible_books` reference table (`... WHERE book_name NOT IN (SELECT DISTINCT book FROM verses)`) — the tool docstring documents `bible_books`/`book_aliases` and steers the model to anti-join rather than recall the 66-book list. Returns up to **200** rows; when a result hits exactly 200 the tool appends a truncation notice so the model doesn't silently reason over a partial set
-- **`search_sermons_tool`** — BGE-M3 semantic search over `sermon_collection`; use for content queries
-- **`viz_tool`** — Plotly interactive charts: `sermons_per_speaker`, `sermons_per_year`, `verses_per_book`, `sermons_scatter`; accepts optional `top_n: int` (default 15) to control how many results are shown in ranked charts (`sermons_per_speaker`, `verses_per_book`)
-- **`get_bible_versions_tool`** — Returns all stored translations (KJV, ASV, YLT, BBE, ChiUn, NIV, ESV) of a specific verse from `bible_collection`; use for Translation Audit / version comparison
-- **`search_bible_tool`** — BGE-M3 semantic search over `bible_collection`; takes optional `version` filter (e.g. `NIV` to keep English-only, `ChiUn` for Mandarin); use for "find passages about [topic]" queries
-
-### SQLite Schema
-
-```sql
-sermons(
-  sermon_id TEXT PRIMARY KEY,  -- "2024-01-06-the-heart-of-discipleship"
-  date      TEXT,              -- YYYY-MM-DD
-  year      INTEGER,
-  language  TEXT,              -- "English" | "Mandarin"
-  speaker   TEXT,
-  topic     TEXT,
-  theme     TEXT,
-  summary   TEXT,              -- LLM-generated from NG+PS
-  key_verse TEXT,              -- first verse from PS
-  ng_file   TEXT,              -- staging filename of NG
-  ps_file   TEXT,              -- staging filename of PS (nullable)
-  status    TEXT               -- grouped → extracted → indexed | failed
-)
-
-verses(
-  id          INTEGER PRIMARY KEY,
-  sermon_id   TEXT,            -- FK → sermons
-  verse_ref   TEXT,            -- "Luke 9:23"
-  book        TEXT,            -- "Luke"
-  chapter     INTEGER,
-  verse_start INTEGER,
-  verse_end   INTEGER,
-  is_key_verse INTEGER         -- 1 = key verse (first in PS)
-)
-
-bible_versions(
-  version_id   TEXT PRIMARY KEY,  -- "KJV", "ASV", "YLT", "BBE", "ChiUn", "NIV", "ESV"
-  filename     TEXT,              -- scrollmapper/{id}.json or data/bibles/*.epub
-  status       TEXT,              -- "indexed"
-  date_indexed TEXT               -- ISO timestamp
-)
-
--- Reference tables seeded on every SermonRegistry init (survive --wipe / re-ingest)
-bible_books(
-  book_name  TEXT PRIMARY KEY,    -- canonical 66-book name, e.g. "1 Samuel"
-  testament  TEXT,                -- "OT" | "NT"
-  book_order INTEGER              -- 1–66 (canonical order)
-)                                 -- powers gap/coverage anti-joins in sql_query_tool
-
-book_aliases(
-  alias     TEXT PRIMARY KEY,     -- lowercase variant, e.g. "1sam", "gen"
-  canonical TEXT                  -- FK → bible_books.book_name
-)
-```
-
-### ChromaDB
-
-Both collections use **cosine** distance (`hnsw:space="cosine"`, set at creation in `SermonVectorStore.__init__`) — BGE-M3 is trained for cosine, and Chroma's default squared-L2 ranks unnormalised embeddings worse. The space is baked in at creation and NOT upgraded by re-opening with new metadata; collections built before this default stay on l2. `_check_distance_space()` (in `__init__`) raises a clear `RuntimeError` on any non-empty l2 collection, pointing to `scripts/migrate_chroma_cosine.py`, which converts in place **preserving the stored vectors** (no re-embedding / no LLM — the metric is a query-time function, the vectors are identical) with a filesystem backup for rollback.
-
-**`sermon_collection`**
-- Chunks: NG body text (800/150) + LLM summary (single chunk) + a `doc_type="metadata"` title chunk ("Topic | Theme | Speaker | Key verse | Date") per sermon
-- Metadata per chunk: `{sermon_id, doc_type, speaker, date, year, topic, theme, language, key_verse}`
-- Embeddings: `BGE-M3` via the configured `EMBED_BACKEND` (see Embeddings section); cosine distance
-
-**`bible_collection`**
-- ~213,000 chunks across **7 translations**: KJV, ASV, YLT, BBE (Basic English), ChiUn (Chinese Union — Chinese text), NIV, ESV
-- Sources: KJV, ASV, YLT, BBE, ChiUn from Scrollmapper JSON (public domain); NIV, ESV from local EPUB files
-- Metadata per chunk: `{book, chapter, verse, version, reference}`
-- IDs: `{VERSION}_{Book} {chapter}:{verse}` (e.g. `NIV_John 3:16`)
-- Embeddings: `BGE-M3` via the configured `EMBED_BACKEND` (see Embeddings section); cosine distance
-- Note: `ChiUn` is Chinese. `search_bible_tool` takes an optional `version` filter; for English topic queries pass an English version (e.g. `NIV`) to avoid Chinese verses surfacing. `get_bible_versions_tool` returns all 7 versions of a verse — only include ChiUn when Chinese is wanted.
+- **`sql_query_tool`** — SQL against `data/sermons.db`. For **gap/coverage analysis** ("books never preached") use an anti-join against the `bible_books` reference table (`... WHERE book_name NOT IN (SELECT DISTINCT book FROM verses)`) — don't recall the 66-book list. Returns up to 200 rows; a result hitting exactly 200 appends a truncation notice.
+- **`search_sermons_tool`** — BGE-M3 semantic search over `sermon_collection`.
+- **`viz_tool`** — Plotly charts; optional `top_n` (default 15) for ranked charts.
+- **`get_bible_versions_tool`** — all stored translations of a verse (KJV, ASV, YLT, BBE, ChiUn, NIV, ESV).
+- **`search_bible_tool`** — semantic Bible search; pass an English `version` (e.g. `NIV`) for English topic queries so Chinese `ChiUn` verses don't surface.
 
 ## Notable Quirks
 
-- **Metadata chunks for every sermon** (`ingest.py`): in addition to body+summary chunks, every sermon gets a `doc_type="metadata"` chunk embedding `"Topic | Theme | Speaker | Key verse | Date"`. This makes topical/title queries (e.g. "prayer", "discipleship") retrieve the right sermon directly — without it, the topic lives only in metadata and a title-matching query won't surface a sermon unless its body text overlaps. `search_sermons_tool` keeps these chunks retrievable but does NOT surface their content as excerpts (the header already shows the metadata); for textless sermons whose only chunk is metadata it falls back to that content. The title text is built by the shared `build_sermon_title_text()` in `src/ingestion/title_chunk.py` so the ingest path and the backfill script can't drift (they once did — backfill hardcoded `language`). To backfill this chunk for sermons ingested before the change without re-running LLM summaries: `python backfill_title_chunks.py` (idempotent; upserts `{sermon_id}_metadata`, preserves the sermon's actual `language`).
-- **`search_sermons_tool` speaker filter is partial-match** (`src/tools/vector_tool.py`): Chroma metadata `where` is exact-match only, but speakers carry titles ("SP Chua Seng Lee"), so the speaker filter is applied by fetching the **whole collection** (`k = counts()["sermon_collection"]`, bounded by any year/min/max `where` clause inside Chroma) then case-insensitive substring post-filtering, not via a `where` clause. Fetching all (rather than a fixed 4× oversample) guarantees a prolific speaker on a rare topic still fills `k` — e.g. SP Daniel Foo has 110 sermons; a niche query could have none of his in a 4× window. Cost is just an in-memory Chroma scan since `_search` embeds the query only once regardless of `n_results`. Year/min_year/max_year still use `where`.
-- **`.env` is loaded in `chroma_store.py`** (not just `app.py` / `src/llm.py`) so every entry point that touches the vector store — `ingest.py`, `backfill_title_chunks.py`, the eval harness — resolves `EMBED_BACKEND` identically. Without this, a standalone script would fall back to `st` and silently mix embedding backends within a collection (same dim → the dim guard below wouldn't catch it → degraded retrieval).
-- **Embedding-dim guard** (`SermonVectorStore._check_vector_dim_alignment`): on first `_embed`, compares the current embedder's output dim against what's stored in each non-empty collection and raises a clear `RuntimeError` on mismatch (the `EMBED_BACKEND`-switched-without-wipe footgun). Runs once per process. It catches dimension changes (e.g. `st` 1024 → `mlx_qwen` 4096); it does NOT catch same-dim backend swaps (e.g. `st` ↔ `mlx_bge`, both 1024) — those are prevented by the `.env`-loading rule above.
-- **Distance-space guard** (`SermonVectorStore._check_distance_space`): runs in `__init__` (cheap — reads `configuration_json` + `count()`, no model load). Both collections are created with `hnsw:space="cosine"`; if a pre-existing non-empty collection is still on Chroma's default `l2`, it raises a clear `RuntimeError` pointing to `scripts/migrate_chroma_cosine.py`. This exists because Chroma silently ignores the cosine `metadata` on `get_or_create` for a collection that already exists on l2 — so without the guard the cosine switch would be a silent no-op on old data. The migration converts in place, reusing the stored embeddings (metric is a query-time function; no re-embed / no LLM / no re-scrape), after taking a `data/chroma_db.pre-cosine.<ts>.bak` filesystem backup.
-- **Ollama sampling overrides** (`src/llm.py:get_llm`): `ChatOllama` is constructed with explicit `seed`/`top_k`/`top_p`/`repeat_penalty` (env-overridable: `OLLAMA_SEED`, `OLLAMA_TOP_K`, `OLLAMA_TOP_P`, `OLLAMA_REPEAT_PENALTY`) so per-model Modelfile defaults (some ship `temperature=1` / `presence_penalty=1.5`) don't silently control generation. `temperature` is forwarded from the caller. `presence_penalty` / `min_p` are NOT exposed by `ChatOllama` (config `extra='ignore'`) — to neutralise those, edit the Modelfile directly (`ollama show --modelfile X > MF; ollama create -q`).
-
-## RAG Evaluation Harness
-
-`evals/` contains a retrieval + groundedness eval harness driven by `evals/golden_set.json`:
-
-```bash
-python -m evals.run_eval --retrieval     # fast, embedding-only: recall@k + filter precision
-python -m evals.run_eval --groundedness  # slow, invokes live agent via app.respond
-python -m evals.run_eval                 # both; writes evals/eval_report.json; exits non-zero if any pass-rate < 0.7
-```
-
-- **Retrieval** items drive `SermonVectorStore.search_sermons` (replicating the tool's filter handling) and measure recall@k against `must_find`/`must_find_any` sermon_ids, soft topic-precision@k, and hard filter-precision (speaker/year). Baseline: ~0.86 pass rate, ~0.86 avg recall.
-- **Groundedness** items invoke the full ReAct agent and check each answer for expected facts present, forbidden phrases absent (e.g. "based on my knowledge", "typically"), that a tool was actually used, and that negative queries declare "no records" rather than fabricate. Baseline: ~0.86–1.0 pass rate (gnd-05 top-speakers is a known brittle case — the model occasionally omits a verbatim name despite using SQL).
-- Golden-set facts/sermon_ids were verified against `data/sermons.db`; re-verify if the archive is re-ingested.
+- **Metadata chunks for every sermon** (`ingest.py`): every sermon gets a `doc_type="metadata"` chunk embedding `"Topic | Theme | Speaker | Key verse | Date"` so topical/title queries retrieve the right sermon directly. `search_sermons_tool` keeps these retrievable but doesn't surface their content as excerpts (the header already shows it); for textless sermons whose only chunk is metadata it falls back to that content. Title text is built by the shared `build_sermon_title_text()` in `src/ingestion/title_chunk.py` so ingest and backfill can't drift. Backfill for pre-change sermons: `python backfill_title_chunks.py` (idempotent).
+- **`search_sermons_tool` speaker filter is partial-match** (`src/tools/vector_tool.py`): Chroma `where` is exact-match only but speakers carry titles ("SP Chua Seng Lee"), so the filter fetches the **whole collection** then case-insensitive substring post-filters — guaranteeing a prolific speaker on a rare topic still fills `k`. Year/min_year/max_year still use `where`.
+- **`.env` is loaded in `chroma_store.py`** (not just `app.py`/`src/llm.py`) so every entry point resolves `EMBED_BACKEND` identically — otherwise a standalone script would silently mix embedding backends within a collection.
+- **Embedding-dim guard** (`SermonVectorStore._check_vector_dim_alignment`): raises `RuntimeError` if the embedder's output dim mismatches a non-empty collection (the `EMBED_BACKEND`-switched-without-wipe footgun). Catches dim changes (1024→4096); does NOT catch same-dim swaps (`st`↔`mlx_bge`) — those are prevented by the `.env` rule above.
+- **Distance-space guard** (`SermonVectorStore._check_distance_space`): both collections use **cosine** (`hnsw:space="cosine"`); a pre-existing non-empty collection still on Chroma's default `l2` raises `RuntimeError` pointing to `scripts/migrate_chroma_cosine.py` (in-place, preserves stored vectors, filesystem backup). Chroma silently ignores the cosine metadata on `get_or_create` for an existing l2 collection — hence the guard.
+- **Ollama sampling overrides** (`src/llm.py:get_llm`): `ChatOllama` gets explicit `seed`/`top_k`/`top_p`/`repeat_penalty` (env-overridable: `OLLAMA_SEED`/`OLLAMA_TOP_K`/`OLLAMA_TOP_P`/`OLLAMA_REPEAT_PENALTY`) so per-model Modelfile defaults don't silently control generation. `presence_penalty`/`min_p` are NOT exposed by `ChatOllama` — to neutralise those, edit the Modelfile directly (`ollama show --modelfile X > MF; ollama create -q`).
 
 ## Notable Quirks (legacy)
 
-- NG labeled fields (`TOPIC`, `SPEAKER`, etc.) are reliable for 2022+ files. Older files fall back to `filename_parser.py`.
-- Some older BBTC pages (pre-2020) only posted one file (slides, no cell guide). These produce PS-only sermon groups with no topic/speaker — this is expected, not a bug. Genuinely PS-only groups are skipped correctly in incremental mode via `ps_file_indexed`.
-- `Member27s` in filenames is a URL-decoded apostrophe (`%27s` → `27s`). The classifier regex handles this — `members?(?:27s?)?` matches "member's guide" in all encoded forms.
+- NG labeled fields are reliable for 2022+ files; older files fall back to `filename_parser.py`.
+- Pre-2020 pages sometimes posted only slides → PS-only groups with no topic/speaker (expected, not a bug); genuinely PS-only groups are skipped correctly in incremental mode via `ps_file_indexed`.
+- `Member27s` in filenames is a URL-decoded apostrophe (`%27s` → `27s`); the classifier regex handles all encoded forms.
 - ~50% of PS files are image-based PDFs with no extractable text — verse extraction relies on filename regex.
 - The scraper skips handouts before downloading (classify-before-download).
 - `create_react_agent` from `langgraph.prebuilt` is used — NOT `langchain.agents.create_agent`.
-- BGE-M3 embedding model: 1.2 GB, multilingual (handles English + Mandarin sermons). Runs via `sentence-transformers` on MPS — no Ollama required.
-- MLX ingest: `MLXChatModel` wraps `mlx_lm.generate` as a LangChain `BaseChatModel`. Qwen3 thinking mode is disabled via `enable_thinking=False` in `apply_chat_template` (with `<think>` stripping as fallback) to avoid wasting tokens on reasoning during structured ingest tasks.
-- MLX chat: `MLXChatModel` does NOT implement `bind_tools`, so it can't drive the ReAct agent. The chat path uses `mlx_lm.server` (OpenAI-compat) + `ChatOpenAI` instead — see `_ensure_mlx_server()` in `src/llm.py`. The subprocess is spawned lazily on the first MLX chat request and shut down via `atexit` / `SIGTERM` / `SIGINT` / `SIGHUP` (handlers must be registered at module load on the main thread; `signal.signal()` is a no-op from Gradio worker threads). `SIGKILL` and hard crashes bypass cleanup — orphan `mlx_lm.server` / `ollama serve` processes can be detected with `pgrep -fl "mlx_lm|ollama serve"`.
-- Agent caching (`_agent_cache` / `_llm_cache` in `app.py`): keyed by the **`(provider, model)`** tuple, so two engines that share a provider (e.g. the three `ollama` models) each get their own cached agent instead of colliding. `_llm_cache` also holds a **strong reference to the LLM instance** to prevent garbage-collection from triggering httpx `__del__` close on the underlying client while LangGraph still holds the wrapped runnable.
-- "Client closed" retry: `respond()` in `app.py` wraps `agent.invoke()` in a 3-attempt loop that, on `"client has been closed"`, evicts both `_agent_cache[(provider, model)]` and `_llm_cache[(provider, model)]` and rebuilds before retrying. Other exceptions bubble immediately. (This was originally an MLX/`ChatOpenAI` httpx quirk; it's harmless for the current Ollama/cloud engines.)
-- ReAct agent reuses ~3,238 tokens of system prompt + tool schemas per LLM call. For MLX, `--prompt-cache-size 4 --prompt-cache-bytes 8000000000` is passed to `mlx_lm.server` so the static preamble is only prefilled once — second/third calls are ~70-80% faster (5s → 1s in benchmarks).
-- Chat history window: `app.py:respond()` passes the last 6 history entries (3 user + 3 assistant exchanges) to the agent. Bump the slice if you need longer memory.
-- `OLLAMA_CHAT_MODEL` and `OLLAMA_INGEST_MODEL` are auto-detected via `_auto_detect_ollama_model()` in `src/llm.py`: if not set in `.env`, it queries `localhost:11434/api/tags` and picks the first available model, raising `RuntimeError` if none are found.
-- Embedding init in `SermonVectorStore` is lazy — deferred to first `_upsert_in_batches` or `_search` call (reads `EMBED_BACKEND` then), so importing the class does not require the model (or Ollama) to be loaded. MLX backends go through the `_MLXEmbedder` adapter, which wraps `mlx_embeddings.generate` behind a `sentence-transformers`-style `.encode()` returning an `mx.array` (`.tolist()`-compatible with the existing `_embed`).
-- `bible_ingest.py` treats `status="skipped"` as equivalent to `"indexed"` in `_is_indexed()`, so missing EPUB files are not retried on every run.
+- MLX chat: `MLXChatModel` does NOT implement `bind_tools`, so it can't drive the ReAct agent; the chat path uses `mlx_lm.server` (OpenAI-compat) + `ChatOpenAI` instead (`_ensure_mlx_server()` in `src/llm.py`). Subprocess cleanup via `atexit`/`SIGTERM`/`SIGINT`/`SIGHUP` (registered at module load, main thread); `SIGKILL`/crashes bypass it — orphan processes: `pgrep -fl "mlx_lm|ollama serve"`.
+- Agent caching (`_agent_cache`/`_llm_cache` in `app.py`): keyed by `(provider, model)`; `_llm_cache` holds a strong reference to the LLM to prevent GC from closing the httpx client under LangGraph.
+- "Client closed" retry: `respond()` retries `agent.invoke()` 3× on `"client has been closed"`, evicting both caches and rebuilding; other exceptions bubble.
+- Chat history window: `respond()` passes the last 6 history entries (3 user + 3 assistant exchanges).
+- `OLLAMA_CHAT_MODEL`/`OLLAMA_INGEST_MODEL` auto-detect via `_auto_detect_ollama_model()` in `src/llm.py` if unset (queries `/api/tags`, raises if none found).
+- Embedding init in `SermonVectorStore` is lazy — deferred to first `_upsert_in_batches`/`_search` (reads `EMBED_BACKEND` then), so importing doesn't load the model.
+- `bible_ingest.py` treats `status="skipped"` as `"indexed"` in `_is_indexed()`, so missing EPUBs aren't retried every run.
+- `_run_archive_update` (app.py "Update Archive" button): scrapes current year + incremental ingest as isolated subprocesses. **Freshness caveat:** the header stats bar reads SQLite fresh, but the chat agent's semantic search holds ChromaDB loaded in memory at startup and won't see new chunks until the app restarts. Chroma has no first-class concurrent-multi-process support — treat as an occasional maintenance action.
+
+## RAG Evaluation Harness
+
+See `evals/CLAUDE.md` — retrieval + groundedness harness driven by `evals/golden_set.json` (`python -m evals.run_eval`).
