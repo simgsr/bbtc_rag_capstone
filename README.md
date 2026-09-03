@@ -27,8 +27,8 @@ The LangGraph ReAct agent decides in real time which tool to invoke — SQL for 
 
 | Layer | Technology |
 |---|---|
-| **Chat LLM** | Picked at runtime via the "Inference Engine" dropdown — auto-discovered at startup from the local Ollama daemon (tool-capable models ≥30B params; `qwen3.6:35b-mlx` pinned as default) plus cloud engines: Gemini 2.5 Flash / Pro · Groq |
-| **Ingest LLM** | Apple MLX (`Qwen3-4B-4bit`) on Neural Engine — default; Ollama / Groq / Gemini configurable |
+| **Chat LLM** | Picked at runtime via the "Inference Engine" dropdown — auto-discovered at startup from the local Ollama daemon (tool-capable models ≥30B params; `qwen3.8:latest` pinned as default) plus cloud engines: Gemini 2.5 Flash / Pro · Groq |
+| **Ingest LLM** | Ollama (`qwen3.8:latest`) — default; MLX / Groq / Gemini configurable |
 | **Embeddings** | BGE-M3 (multilingual) — `sentence-transformers` on MPS by default, or native MLX (`bge-m3` / `Qwen3-Embedding`) via `EMBED_BACKEND` |
 | **Vector store** | ChromaDB |
 | **Structured store** | SQLite |
@@ -105,24 +105,24 @@ The pipeline pairs these by date proximity and topic overlap before ingestion.
 ### Prerequisites
 
 - Python 3.11+ on Apple Silicon (M-series) Mac
-- [Ollama](https://ollama.ai) running locally (`ollama serve`) — **for the chat UI only**
+- [Ollama](https://ollama.ai) running locally (`ollama serve`) — **for the chat UI and ingest LLM**
 - Make (pre-installed on macOS)
 
-Pull the default chat model before running (embeddings no longer need Ollama):
+Pull the default chat + ingest model before running (embeddings don't need Ollama):
 
 ```bash
-ollama pull qwen3.6:35b-mlx    # default chat LLM — ~21 GB
-# optional heavier engines offered in the dropdown:
-# ollama pull qwen3.5:122b-a10b-q4_K_M   # ~81 GB (deep)
-# ollama pull deepseek-v4-pro:cloud      # (RAG Q&A)
+ollama pull qwen3.8:latest    # default chat + ingest LLM
+# optional engines offered in the dropdown:
+# ollama pull gemma4:31b-mlx          # (local, 31B)
+# ollama pull deepseek-v4-pro:cloud   # (RAG Q&A)
 ```
 
 > **Hardware guide** — see `.env.example` for model recommendations based on available RAM (8 GB → 96 GB+).
 
-**Ingest and embeddings run fully on Apple Silicon without Ollama; the chat agent runs on Ollama (local) or a cloud backend:**
+**The chat agent and ingest LLM run on Ollama (local); embeddings run on Apple Silicon without Ollama:**
 
-- **Ingest LLM** — [mlx-lm](https://github.com/ml-explore/mlx-lm) runs `Qwen3-4B-4bit` on the Neural Engine. The model (~2.5 GB) is downloaded from HuggingFace automatically on first run.
-- **Chat LLM (Ollama, default)** — the "Inference Engine" dropdown is built at startup by querying the local Ollama daemon (`ollama list`): tool-capable models with ≥30B parameters are listed, `qwen3.6:35b-mlx` is pinned as the default, and the cloud engines Gemini 2.5 Flash / Pro and Groq (key-gated) are appended. Each entry carries its own model, and agents are cached per `(provider, model)` so switching engines is instant after the first load.
+- **Ingest LLM** — Ollama runs `qwen3.8:latest` (same model as chat, so no model-swap). Set `INGEST_PROVIDER=ollama_local` (default); MLX / Groq / Gemini are configurable alternatives.
+- **Chat LLM (Ollama, default)** — the "Inference Engine" dropdown is built at startup by querying the local Ollama daemon (`ollama list`): tool-capable models with ≥30B parameters are listed, `qwen3.8:latest` is pinned as the default, and the cloud engines Gemini 2.5 Flash / Pro and Groq (key-gated) are appended. Each entry carries its own model, and agents are cached per `(provider, model)` so switching engines is instant after the first load.
 - **Embeddings** — `sentence-transformers` runs BGE-M3 on MPS (Apple Silicon GPU). The model (~570 MB) is downloaded from HuggingFace automatically on first run.
 
 Both are installed via `requirements.txt` — no extra steps needed.
@@ -208,7 +208,7 @@ cp .env.example .env
 
 | Variable | Default | Description |
 |---|---|---|
-| `OLLAMA_CHAT_MODEL` | `gemma4:latest` | Fallback Ollama chat model. The "Inference Engine" dropdown discovers models from the running Ollama daemon (`_discover_ollama_models` in `app.py`); this value is only used as the default when discovery finds no qualifying local model |
+| `OLLAMA_CHAT_MODEL` | `qwen3.8:latest` | Fallback Ollama chat model. The "Inference Engine" dropdown discovers models from the running Ollama daemon (`_discover_ollama_models` in `app.py`); this value is only used as the default when discovery finds no qualifying local model |
 | `GRADIO_USERNAME` / `GRADIO_PASSWORD` | *(unset)* | Set both to gate access with a login prompt. With auth set the UI binds `0.0.0.0` (LAN-reachable); with auth unset it binds `127.0.0.1` (localhost only) — the secure default |
 | `GRADIO_SERVER_NAME` | `127.0.0.1` (or `0.0.0.0` when auth is set) | Override the bind host. Set `0.0.0.0` to expose on the LAN without auth (a warning prints) |
 | `OLLAMA_NUM_CTX` | `32768` | Ollama context window (default 2048 is too small for ReAct + history) |
@@ -218,9 +218,9 @@ cp .env.example .env
 | `MLX_PROMPT_CACHE_SLOTS` | `4` | KV-cache slots — reuses system prompt + tool schemas across ReAct calls |
 | `MLX_PROMPT_CACHE_BYTES` | `8000000000` | KV-cache budget in bytes (8 GB) |
 | `MLX_SERVER_STARTUP_TIMEOUT` | `1200` | Seconds to wait for `mlx_lm.server` to load a model before erroring — raise for large/first-time weights (e.g. the 80B, ~85 GB) |
-| `INGEST_PROVIDER` | `mlx` | Ingest LLM backend: `mlx` \| `ollama_local` \| `groq` \| `gemini` |
+| `INGEST_PROVIDER` | `ollama_local` | Ingest LLM backend: `ollama_local` \| `mlx` \| `groq` \| `gemini` |
 | `MLX_INGEST_MODEL` | `mlx-community/Qwen3-4B-4bit` | MLX ingest model; auto-downloaded on first run |
-| `OLLAMA_INGEST_MODEL` | `gemma4:latest` | Only used when `INGEST_PROVIDER=ollama_local` |
+| `OLLAMA_INGEST_MODEL` | `qwen3.8:latest` | Only used when `INGEST_PROVIDER=ollama_local` |
 | `EMBED_BACKEND` | `st` | Embedder: `st` (BAAI/bge-m3 via sentence-transformers, 1024-dim) · `mlx_bge` (`mlx-community/bge-m3-mlx-fp16`, 1024-dim, ~2× faster) · `mlx_qwen` (`Qwen3-Embedding-8B`, 4096-dim, higher MTEB but slower). Switching backends requires a wipe + re-ingest of both collections. |
 | `MLX_EMBED_MODEL` / `MLX_EMBED_MAX_LEN` | *(backend default)* / `1024` | Override the HF repo / token cap for the `mlx_*` embedding backends |
 | `GROQ_API_KEY` | *(empty)* | Optional Groq cloud inference |
@@ -377,7 +377,7 @@ make test
 
 - **Classify-before-download**: The scraper classifies filenames against a regex before downloading, so handout PDFs are never fetched.
 - **~50% image-based PDFs**: Many PS slide files have no extractable text — verse extraction relies entirely on filename regex parsing.
-- **Fully local by default**: the chat agent runs on Ollama (default `qwen3.6:35b-mlx`; the dropdown also lists your other local ≥30B tool-capable models). Ingest LLM runs on MLX (Neural Engine) and embeddings run on MPS via `sentence-transformers` — no Ollama needed for ingest or embeddings. Gemini/Groq are optional cloud fallbacks.
+- **Fully local by default**: the chat agent runs on Ollama (default `qwen3.8:latest`; the dropdown also lists your other local ≥30B tool-capable models). Ingest LLM runs on Ollama too (same model, so no model-swap) and embeddings run on MPS via `sentence-transformers` — no MLX needed. Gemini/Groq are optional cloud fallbacks.
 - **NG labeled fields are reliable from 2022+**: Pre-2022 files fall back to `filename_parser.py` heuristics.
 - **Manifest-based pairing**: The scraper writes `_manifest_*.json` files that record which PDFs came from the same sermon page. The grouper reads these first for exact pairing, then falls back to fuzzy date/topic matching.
 

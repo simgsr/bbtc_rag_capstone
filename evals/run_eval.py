@@ -19,7 +19,7 @@ Usage:
     python -m evals.run_eval                 # run both
     python -m evals.run_eval --retrieval     # retrieval only (fast, no LLM)
     python -m evals.run_eval --groundedness  # agent groundedness only (slow)
-    python -m evals.run_eval --selection "qwen3.6:35b [local · fast · default]"
+    python -m evals.run_eval --selection "qwen3.8:latest [local · 27.3B]"
 
 The retrieval pass needs only the embedding model; the groundedness pass needs
 Ollama (or a cloud key) since it invokes the live agent.

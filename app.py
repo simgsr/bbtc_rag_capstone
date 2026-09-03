@@ -146,7 +146,7 @@ _OLLAMA_PARAM_MIN_B = 30.0  # min parameters (billions) to keep a local model
 # Preferred default engine. If this Ollama model is installed it is pinned to the
 # front of the dropdown (making it the default) and shown even if it falls below the
 # parameter gate. No effect if the model isn't present.
-_PINNED_MODEL = "qwen3.6:35b-mlx"
+_PINNED_MODEL = "qwen3.8:latest"
 
 
 def _param_billions(psize: str, name: str):
@@ -154,7 +154,7 @@ def _param_billions(psize: str, name: str):
 
     Prefers Ollama's reported ``parameter_size`` (e.g. "5.1B", "158B", "2.81T");
     for models that report none (some MLX builds), parses the size tag off the
-    model name (e.g. ``qwen3.6:35b-mlx`` → 35).
+    model name (e.g. ``gemma4:31b-mlx`` → 31).
     """
     import re
     m = re.match(r"([\d.]+)\s*([BMT])?", (psize or "").strip().upper())
