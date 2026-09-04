@@ -18,6 +18,8 @@ import re
 
 import fitz  # PyMuPDF
 
+from src.ingestion.ps_extractor import parse_verses_from_text
+
 # Fields the metadata prompt asks for, in the order the model is told to reply.
 _FIELDS = ("topic", "speaker", "theme", "date", "key_verse", "summary")
 
@@ -71,7 +73,11 @@ def _parse_vision_response(text: str) -> dict:
     """
     result: dict[str, str | None] = {}
     for field in _FIELDS:
-        m = re.search(rf'^\s*{field}\s*:\s*(.*)$', text, re.IGNORECASE | re.MULTILINE)
+        # Field labels are written without an underscore in the prompt
+        # (`KEYVERSE:`), so the matcher must tolerate both `KEYVERSE:` and
+        # `KEY_VERSE:` / `KEY VERSE:` — otherwise key_verse is silently dropped.
+        label = re.sub(r"_", r"[_ ]?", field)
+        m = re.search(rf'^\s*{label}\s*:\s*(.*)$', text, re.IGNORECASE | re.MULTILINE)
         if not m:
             continue
         value = m.group(1).strip()
@@ -125,11 +131,27 @@ def extract_verses_from_images(images: list[str], llm) -> list[str]:
     try:
         resp = llm.invoke([HumanMessage(content=content)])
         raw = resp.content if hasattr(resp, "content") else str(resp)
-        if "NONE" in raw.upper():
-            return []
-        lines = [l.strip() for l in raw.strip().split("\n") if l.strip()]
-        verse_pattern = re.compile(r'^[A-Z][a-z]+ \d+:\d+', re.IGNORECASE)
-        return [l for l in lines if verse_pattern.match(l)]
+        # Parse through the same machinery as PS filenames/text so numbered books
+        # ("1 Peter 4:8") and multi-word books ("Song of Songs 2:1") are handled
+        # consistently — a naive `^[A-Z][a-z]+ \d+:\d+` filter dropped both.
+        # Book-only mentions (no chapter) are dropped, mirroring ingest.py's rule
+        # (a bare book name collides with speaker names and common words).
+        refs, seen = [], set()
+        for line in raw.strip().split("\n"):
+            line = line.strip()
+            # The prompt's negative token: "If no verses are visible, reply with
+            # NONE" — skip exactly that (per-line, so a stray "none" elsewhere in
+            # a real answer doesn't discard the verses it does list).
+            if not line or re.match(r'^none[,.]?$', line, re.IGNORECASE):
+                continue
+            for v in parse_verses_from_text(line):
+                if not v.get("chapter"):
+                    continue
+                ref = v["verse_ref"]
+                if ref not in seen:
+                    seen.add(ref)
+                    refs.append(ref)
+        return refs
     except Exception as e:
         print(f"  ⚠️  Vision verse extraction failed: {e}", flush=True)
         return []
