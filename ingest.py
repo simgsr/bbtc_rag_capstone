@@ -19,11 +19,14 @@ from src.ingestion.ps_extractor import (
     parse_verses_from_filename, parse_verses_from_text,
     extract_ps_text, extract_verses_from_text
 )
+from src.ingestion.vision_extractor import (
+    render_pdf_pages, extract_from_images, extract_verses_from_images
+)
 from src.storage.sqlite_store import SermonRegistry
 from src.storage.chroma_store import SermonVectorStore
 from src.storage.normalize_speaker import normalize_speaker
 from src.storage.normalize_book import normalize_book
-from src.llm import get_ingest_llm
+from src.llm import get_ingest_llm, get_vision_llm
 
 STAGING_DIR = "data/staging"
 CHROMA_DIR = "data/chroma_db"
@@ -85,8 +88,32 @@ def _detect_language(filename: str) -> str:
     return "English"
 
 
+def _add_verse_refs(refs: list[str], all_verses: list[dict], existing_refs: set[str]) -> None:
+    """Parse raw verse-ref strings (e.g. from LLM/vision extraction), dedup, and
+    append to ``all_verses``. Refs that don't match a canonical book are dropped."""
+    for ref in refs:
+        norm_ref = ref.lower().replace(" ", "")
+        if norm_ref in existing_refs:
+            continue
+        m = re.match(r'^(\w+(?:\s\w+)?)\s+(\d+)(?::(\d+)(?:-(\d+))?)?$', ref)
+        if m:
+            canonical_book = normalize_book(m.group(1))
+            if canonical_book is None:
+                continue
+            all_verses.append({
+                "verse_ref": ref,
+                "book": canonical_book,
+                "chapter": int(m.group(2)),
+                "verse_start": int(m.group(3)) if m.group(3) else None,
+                "verse_end": int(m.group(4)) if m.group(4) else None,
+                "is_key_verse": 0,
+            })
+            existing_refs.add(norm_ref)
+
+
 def process_group(group, registry: SermonRegistry, vector_store: SermonVectorStore,
-                  llm, splitter: RecursiveCharacterTextSplitter, incremental: bool, force: bool = False):
+                  llm, splitter: RecursiveCharacterTextSplitter, incremental: bool,
+                  force: bool = False, vision_llm=None):
     ng_file = group.ng
     ps_files = group.ps
 
@@ -111,6 +138,24 @@ def process_group(group, registry: SermonRegistry, vector_store: SermonVectorSto
     theme = meta.get("theme")
     language = _detect_language(ng_file or (ps_files[0] if ps_files else "English_"))
     ng_body = extract_ng_body(ng_text) if ng_text else ""
+
+    # Vision fallback: when the NG text is missing or yields no topic (textless
+    # image-based PDF, or a PS-only group with no NG file), render the pages and
+    # ask the multimodal vision model to read them. Vision fills gaps only — it
+    # never overwrites text-derived values.
+    vision_meta = {}
+    if vision_llm:
+        if ng_file and (not ng_text or not topic):
+            print(f"    👁️  Vision-extracting metadata from {ng_file} ...", flush=True)
+            vision_meta = extract_from_images(render_pdf_pages(ng_path), vision_llm)
+        elif not ng_file and ps_files:
+            ps0_path = os.path.join(STAGING_DIR, ps_files[0])
+            print(f"    👁️  Vision-extracting metadata from PS-only {ps_files[0]} ...", flush=True)
+            vision_meta = extract_from_images(render_pdf_pages(ps0_path), vision_llm)
+        topic = topic or vision_meta.get("topic")
+        speaker = speaker or vision_meta.get("speaker")
+        theme = theme or vision_meta.get("theme")
+        date = date or vision_meta.get("date")
 
     # Extract PS verses
     all_verses = []
@@ -140,32 +185,21 @@ def process_group(group, registry: SermonRegistry, vector_store: SermonVectorSto
                 existing_refs.add(norm)
 
     # LLM verse extraction from PS text (always try if text is available)
+    existing_refs = {v["verse_ref"].lower().replace(" ", "") for v in all_verses}
     if ps_text_combined.strip() and llm:
-        llm_verse_refs = extract_verses_from_text(ps_text_combined, llm)
-        
-        # De-duplicate: track existing normalized refs
-        # We normalize by removing spaces and lowercasing
-        existing_refs = {v["verse_ref"].lower().replace(" ", "") for v in all_verses}
+        _add_verse_refs(extract_verses_from_text(ps_text_combined, llm), all_verses, existing_refs)
 
-        for ref in llm_verse_refs:
-            norm_ref = ref.lower().replace(" ", "")
-            if norm_ref in existing_refs:
-                continue
-            
-            m = re.match(r'^(\w+(?:\s\w+)?)\s+(\d+)(?::(\d+)(?:-(\d+))?)?$', ref)
-            if m:
-                canonical_book = normalize_book(m.group(1))
-                if canonical_book is None:
-                    continue
-                all_verses.append({
-                    "verse_ref": ref, 
-                    "book": canonical_book,
-                    "chapter": int(m.group(2)),
-                    "verse_start": int(m.group(3)) if m.group(3) else None,
-                    "verse_end": int(m.group(4)) if m.group(4) else None,
-                    "is_key_verse": 0,
-                })
-                existing_refs.add(norm_ref)
+    # Vision fallback for textless PS slides: no text to read, so render the
+    # pages and ask the vision model for the verse refs shown on the slides.
+    if not ps_text_combined.strip() and ps_files and vision_llm:
+        ps0_path = os.path.join(STAGING_DIR, ps_files[0])
+        print(f"    👁️  Vision-extracting verses from {ps_files[0]} ...", flush=True)
+        _add_verse_refs(extract_verses_from_images(render_pdf_pages(ps0_path), vision_llm),
+                        all_verses, existing_refs)
+
+    # Vision key verse (from the metadata pass) also feeds the verse list.
+    if vision_meta.get("key_verse"):
+        _add_verse_refs(re.split(r'[;,]\s*', vision_meta["key_verse"]), all_verses, existing_refs)
 
     # Drop book-only references (no chapter): a bare book name is too unreliable
     # to store as a preached verse — it collides with speaker names and common
@@ -179,9 +213,13 @@ def process_group(group, registry: SermonRegistry, vector_store: SermonVectorSto
     key_verse = all_verses[0]["verse_ref"] if all_verses else None
     verse_refs = [v["verse_ref"] for v in all_verses]
 
-    # Generate unified summary
+    # Generate unified summary. For textless NG / PS-only groups there is no
+    # body text to summarise — fall back to the vision model's own summary.
     print(f"    🧠 Summarising ({topic or 'unknown topic'}) ...", flush=True)
-    summary = _generate_summary(ng_body, topic, theme, speaker, verse_refs, ps_text_combined, llm)
+    if ng_body:
+        summary = _generate_summary(ng_body, topic, theme, speaker, verse_refs, ps_text_combined, llm)
+    else:
+        summary = vision_meta.get("summary")
 
     sermon_id = _make_sermon_id(date, topic, ng_file or (ps_files[0] if ps_files else "unknown"))
 
@@ -312,6 +350,9 @@ def run_pipeline(wipe: bool = False, year: int | None = None, incremental: bool 
     # --- Expensive setup: embeddings + LLM (only reached when there is work to do) ---
     vector_store = SermonVectorStore(persist_dir=CHROMA_DIR)
     llm = get_ingest_llm()
+    # Vision model is a cheap object to create (the weights load on first use),
+    # so it's built eagerly but only invoked for textless / PS-only groups.
+    vision_llm = get_vision_llm()
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
 
     groups = group_sermon_files(sermon_files, staging_dir=STAGING_DIR)
@@ -334,7 +375,7 @@ def run_pipeline(wipe: bool = False, year: int | None = None, incremental: bool 
                     continue
             label = ng or (group.ps[0] if group.ps else "unknown")
             print(f"  ⏳ [{indexed + 1}/{total - skipped}] {label} ...", flush=True)
-            process_group(group, registry, vector_store, llm, splitter, incremental, force)
+            process_group(group, registry, vector_store, llm, splitter, incremental, force, vision_llm)
             indexed += 1
         except Exception as e:
             print(f"  ❌ Error: {e}", flush=True)

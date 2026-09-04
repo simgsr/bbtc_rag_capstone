@@ -52,6 +52,9 @@ def _auto_detect_ollama_model(env_key: str) -> str:
 
 OLLAMA_CHAT_MODEL = _auto_detect_ollama_model("OLLAMA_CHAT_MODEL")
 OLLAMA_INGEST_MODEL = _auto_detect_ollama_model("OLLAMA_INGEST_MODEL")
+# Multimodal model that reads image-based (textless) sermon PDFs during ingest.
+# Empty string disables the vision fallback in ingest.py.
+OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "gemma4:e4b")
 MLX_INGEST_MODEL = os.getenv("MLX_INGEST_MODEL", "mlx-community/Qwen3-4B-4bit")
 MLX_CHAT_MODEL = os.getenv("MLX_CHAT_MODEL", "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit")
 MLX_SERVER_HOST = os.getenv("MLX_SERVER_HOST", "127.0.0.1")
@@ -279,6 +282,21 @@ def get_llm(provider="ollama_local", temperature=0, model=None):
     if provider == "mlx":
         return MLXChatModel(model_name=model or MLX_INGEST_MODEL, temperature=float(temperature))
 
+    return _make_ollama_llm(model or OLLAMA_CHAT_MODEL, temperature)
+
+
+def _make_ollama_llm(model: str, temperature: float = 0):
+    """Build a ChatOllama with explicit sampling overrides.
+
+    The overrides exist so per-model Modelfile defaults (some BBTC Ollama models
+    ship with temperature=1 / presence_penalty=1.5) don't silently control
+    generation. ChatOllama forwards these recognized fields into the request
+    ``options``, which override Modelfile values for the request. NOTE:
+    ChatOllama does NOT expose ``presence_penalty`` / ``min_p`` (config is
+    extra='ignore') — those remain at Modelfile values; edit the Modelfile
+    directly (``ollama show --modelfile X > MF; ollama create -q``) if you need
+    to neutralise them. All values below are env-overridable.
+    """
     from langchain_ollama import ChatOllama
     def _env_int(name, default):
         v = os.getenv(name)
@@ -295,16 +313,8 @@ def get_llm(provider="ollama_local", temperature=0, model=None):
             print(f"⚠️ Invalid float for {name}={v!r}; using default {default}", flush=True)
             return default
     num_ctx = _env_int("OLLAMA_NUM_CTX", 32768)
-    # Override the Modelfile's sampling defaults explicitly so generation isn't
-    # silently controlled by per-model Modelfile params (some BBTC Ollama models
-    # ship with temperature=1 / presence_penalty=1.5). ChatOllama forwards these
-    # recognized fields into the request `options`, which override Modelfile values
-    # for the request. NOTE: ChatOllama does NOT expose `presence_penalty` / `min_p`
-    # (config is extra='ignore') — those remain at Modelfile values; edit the
-    # Modelfile directly (`ollama show --modelfile X > MF; ollama create -q`) if you
-    # need to neutralise them. All values below are env-overridable.
     return ChatOllama(
-        model=model or OLLAMA_CHAT_MODEL,
+        model=model,
         temperature=temperature,
         timeout=600,
         num_ctx=num_ctx,
@@ -313,3 +323,15 @@ def get_llm(provider="ollama_local", temperature=0, model=None):
         top_p=_env_float("OLLAMA_TOP_P", 0.9),
         repeat_penalty=_env_float("OLLAMA_REPEAT_PENALTY", 1.1),
     )
+
+
+def get_vision_llm():
+    """Multimodal Ollama model that reads image-based (textless) sermon PDFs.
+
+    Selected by ``OLLAMA_VISION_MODEL`` (default ``gemma4:e4b`` — small, fast,
+    and multimodal, so it runs via Ollama without the MLX runtime). Returns
+    ``None`` when the env var is set empty, which disables the vision fallback.
+    """
+    if not OLLAMA_VISION_MODEL:
+        return None
+    return _make_ollama_llm(OLLAMA_VISION_MODEL, temperature=0)

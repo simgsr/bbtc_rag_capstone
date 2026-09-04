@@ -28,7 +28,7 @@ The LangGraph ReAct agent decides in real time which tool to invoke — SQL for 
 | Layer | Technology |
 |---|---|
 | **Chat LLM** | Picked at runtime via the "Inference Engine" dropdown — auto-discovered at startup from the local Ollama daemon (tool-capable models ≥30B params; `qwen3.8:latest` pinned as default) plus cloud engines: Gemini 2.5 Flash / Pro · Groq |
-| **Ingest LLM** | Ollama (`qwen3.8:latest`) — default; MLX / Groq / Gemini configurable |
+| **Ingest LLM** | Ollama `qwen3:4b` for summarisation + `gemma4:e4b` (multimodal) for textless PDFs — default; MLX / Groq / Gemini configurable |
 | **Embeddings** | BGE-M3 (multilingual) — `sentence-transformers` on MPS by default, or native MLX (`bge-m3` / `Qwen3-Embedding`) via `EMBED_BACKEND` |
 | **Vector store** | ChromaDB |
 | **Structured store** | SQLite |
@@ -51,7 +51,9 @@ ingest.py
   ├── GROUP     (sermon_grouper.py)   → SermonGroup(ng, ps[])
   ├── EXTRACT   (ng_extractor.py)     → TOPIC/SPEAKER/THEME/DATE via regex
   │             (ps_extractor.py)     → key verse from PS filename
-  ├── SUMMARIZE (MLX or Ollama LLM)  → unified NG+PS summary
+  ├── VISION    (vision_extractor.py) → gemma4:e4b reads textless PDFs / PS-only
+  │                                    → recovers metadata + verses + summary
+  ├── SUMMARIZE (Ollama qwen3:4b)     → unified NG+PS summary
   └── EMBED     (chroma_store.py)     → BGE-M3 → sermon_collection
     ↓
 SQLite (data/sermons.db)              ← structured metadata + verses
@@ -108,10 +110,12 @@ The pipeline pairs these by date proximity and topic overlap before ingestion.
 - [Ollama](https://ollama.ai) running locally (`ollama serve`) — **for the chat UI and ingest LLM**
 - Make (pre-installed on macOS)
 
-Pull the default chat + ingest model before running (embeddings don't need Ollama):
+Pull the default chat + ingest models before running (embeddings don't need Ollama):
 
 ```bash
-ollama pull qwen3.8:latest    # default chat + ingest LLM
+ollama pull qwen3.8:latest    # default chat LLM (Inference Engine dropdown)
+ollama pull qwen3:4b          # ingest summarisation LLM
+ollama pull gemma4:e4b        # vision model — reads textless/image-only PDFs
 # optional engines offered in the dropdown:
 # ollama pull gemma4:31b-mlx          # (local, 31B)
 # ollama pull deepseek-v4-pro:cloud   # (RAG Q&A)
@@ -121,7 +125,8 @@ ollama pull qwen3.8:latest    # default chat + ingest LLM
 
 **The chat agent and ingest LLM run on Ollama (local); embeddings run on Apple Silicon without Ollama:**
 
-- **Ingest LLM** — Ollama runs `qwen3.8:latest` (same model as chat, so no model-swap). Set `INGEST_PROVIDER=ollama_local` (default); MLX / Groq / Gemini are configurable alternatives.
+- **Ingest LLM** — Ollama runs `qwen3:4b` for summarisation (small + fast, quality rivals much larger models; the chat engine stays on `qwen3.8:latest`). Set `INGEST_PROVIDER=ollama_local` (default); MLX / Groq / Gemini are configurable alternatives.
+- **Vision LLM (textless PDFs)** — ~50% of PS (slides) PDFs are image-only with no extractable text, and some groups have no NG (notes) file at all. `ingest.py` renders those pages and asks the multimodal `gemma4:e4b` (via Ollama, no MLX runtime) to recover topic/speaker/theme/key-verse/summary. Set `OLLAMA_VISION_MODEL` empty to disable.
 - **Chat LLM (Ollama, default)** — the "Inference Engine" dropdown is built at startup by querying the local Ollama daemon (`ollama list`): tool-capable models with ≥30B parameters are listed, `qwen3.8:latest` is pinned as the default, and the cloud engines Gemini 2.5 Flash / Pro and Groq (key-gated) are appended. Each entry carries its own model, and agents are cached per `(provider, model)` so switching engines is instant after the first load.
 - **Embeddings** — `sentence-transformers` runs BGE-M3 on MPS (Apple Silicon GPU). The model (~570 MB) is downloaded from HuggingFace automatically on first run.
 
@@ -220,7 +225,8 @@ cp .env.example .env
 | `MLX_SERVER_STARTUP_TIMEOUT` | `1200` | Seconds to wait for `mlx_lm.server` to load a model before erroring — raise for large/first-time weights (e.g. the 80B, ~85 GB) |
 | `INGEST_PROVIDER` | `ollama_local` | Ingest LLM backend: `ollama_local` \| `mlx` \| `groq` \| `gemini` |
 | `MLX_INGEST_MODEL` | `mlx-community/Qwen3-4B-4bit` | MLX ingest model; auto-downloaded on first run |
-| `OLLAMA_INGEST_MODEL` | `qwen3.8:latest` | Only used when `INGEST_PROVIDER=ollama_local` |
+| `OLLAMA_INGEST_MODEL` | `qwen3:4b` | Only used when `INGEST_PROVIDER=ollama_local` |
+| `OLLAMA_VISION_MODEL` | `gemma4:e4b` | Multimodal Ollama model that reads image-based (textless) sermon PDFs during ingest — recovers metadata/verses/summary from rendered pages. Set empty to disable the vision fallback |
 | `EMBED_BACKEND` | `st` | Embedder: `st` (BAAI/bge-m3 via sentence-transformers, 1024-dim) · `mlx_bge` (`mlx-community/bge-m3-mlx-fp16`, 1024-dim, ~2× faster) · `mlx_qwen` (`Qwen3-Embedding-8B`, 4096-dim, higher MTEB but slower). Switching backends requires a wipe + re-ingest of both collections. |
 | `MLX_EMBED_MODEL` / `MLX_EMBED_MAX_LEN` | *(backend default)* / `1024` | Override the HF repo / token cap for the `mlx_*` embedding backends |
 | `GROQ_API_KEY` | *(empty)* | Optional Groq cloud inference |
