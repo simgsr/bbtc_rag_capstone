@@ -188,6 +188,18 @@ class SermonVectorStore:
     def upsert_sermon_chunks(self, chunks: list[str], metadatas: list[dict], ids: list[str]):
         self._upsert_in_batches(self._sermons, chunks, metadatas, ids)
 
+    def delete_sermon_chunks(self, sermon_id: str):
+        """Delete all Chroma chunks for a sermon (matched by metadata ``sermon_id``).
+
+        Used by force re-ingest to remove the previously-indexed version of a
+        sermon whose ``sermon_id`` may have changed (e.g. vision recovered a
+        better topic). No-op if the sermon has no chunks.
+        """
+        try:
+            self._sermons.delete(where={"sermon_id": sermon_id})
+        except Exception:
+            pass  # nothing to delete / collection not ready
+
     def upsert_bible_chunks(self, chunks: list[str], metadatas: list[dict], ids: list[str]):
         self._upsert_in_batches(self._bible, chunks, metadatas, ids)
 

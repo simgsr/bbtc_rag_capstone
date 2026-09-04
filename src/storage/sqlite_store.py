@@ -195,6 +195,35 @@ class SermonRegistry:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM verses WHERE sermon_id = ?", (sermon_id,))
 
+    def get_sermon_by_file(self, ng_file: str | None, ps_file: str | None) -> dict | None:
+        """Find an existing sermon by its source file(s).
+
+        Used by force re-ingest to locate the previously-indexed version of a
+        sermon whose ``sermon_id`` may have changed (e.g. vision recovered a
+        better topic). Prefers the NG file; falls back to the PS file.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            if ng_file:
+                row = conn.execute(
+                    "SELECT * FROM sermons WHERE ng_file = ? ORDER BY rowid DESC LIMIT 1",
+                    (ng_file,),
+                ).fetchone()
+            elif ps_file:
+                row = conn.execute(
+                    "SELECT * FROM sermons WHERE ps_file = ? ORDER BY rowid DESC LIMIT 1",
+                    (ps_file,),
+                ).fetchone()
+            else:
+                return None
+            return dict(row) if row else None
+
+    def delete_sermon(self, sermon_id: str):
+        """Delete a sermon and its verses (used when re-ingesting with a changed ID)."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM verses WHERE sermon_id = ?", (sermon_id,))
+            conn.execute("DELETE FROM sermons WHERE sermon_id = ?", (sermon_id,))
+
     def wipe(self):
         with sqlite3.connect(self.db_path) as conn:
             conn.executescript(

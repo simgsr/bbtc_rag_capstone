@@ -88,6 +88,20 @@ def _detect_language(filename: str) -> str:
     return "English"
 
 
+# Tokens that leak into a speaker name from the filename parser (e.g.
+# "Edric Sng Member27S Guide", "Daniel Foo_Notes") — a speaker containing any
+# of these is garbage and should be replaced by the vision model's reading.
+_SPEAKER_ARTIFACTS = (
+    "member27s", "guide", "copy", "members", "notes", "slides", "ppt",
+    "compressed", "final", "v2", "v3",
+)
+
+
+def _is_garbage_speaker(speaker: str) -> bool:
+    low = speaker.lower()
+    return any(tok in low for tok in _SPEAKER_ARTIFACTS)
+
+
 def _add_verse_refs(refs: list[str], all_verses: list[dict], existing_refs: set[str]) -> None:
     """Parse raw verse-ref strings (e.g. from LLM/vision extraction), dedup, and
     append to ``all_verses``. Refs that don't match a canonical book are dropped."""
@@ -153,9 +167,16 @@ def process_group(group, registry: SermonRegistry, vector_store: SermonVectorSto
             ps0_path = os.path.join(STAGING_DIR, ps_files[0])
             print(f"    👁️  Vision-extracting metadata from PS-only {ps_files[0]} ...", flush=True)
             vision_meta = extract_from_images(render_pdf_pages(ps0_path), vision_llm)
-        topic = topic or vision_meta.get("topic")
-        speaker = speaker or vision_meta.get("speaker")
-        theme = theme or vision_meta.get("theme")
+        # Vision fills gaps only — but a text-derived topic of < 2 chars is
+        # garbage (e.g. "A"/"K" from a broken layout), so vision's topic wins.
+        if vision_meta.get("topic") and (not topic or len(topic.strip()) < 2):
+            topic = vision_meta["topic"]
+        # Same for speakers polluted by filename-parser artifacts.
+        if vision_meta.get("speaker") and (not speaker or _is_garbage_speaker(speaker)):
+            speaker = vision_meta["speaker"]
+        # And for themes that extract to a single char (e.g. "7").
+        if vision_meta.get("theme") and (not theme or len(theme.strip()) < 2):
+            theme = vision_meta["theme"]
         date = date or vision_meta.get("date")
 
     # Extract PS verses
@@ -226,6 +247,14 @@ def process_group(group, registry: SermonRegistry, vector_store: SermonVectorSto
 
     if force:
         print(f"  🔄 Force re-ingesting {sermon_id}...", flush=True)
+        # The sermon_id may have changed since the last ingest (e.g. vision
+        # recovered a real topic where the old row had "A"/"K"). Remove the
+        # previously-indexed version so we don't leave an orphaned duplicate.
+        old = registry.get_sermon_by_file(ng_file, ps_file)
+        if old and old["sermon_id"] != sermon_id:
+            print(f"    🧹 Removing old version {old['sermon_id']} ...", flush=True)
+            registry.delete_sermon(old["sermon_id"])
+            vector_store.delete_sermon_chunks(old["sermon_id"])
         registry.delete_verses(sermon_id)
 
     print(f"  📖 {sermon_id} | {speaker} | {date} | {key_verse}", flush=True)
