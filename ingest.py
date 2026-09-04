@@ -139,13 +139,14 @@ def process_group(group, registry: SermonRegistry, vector_store: SermonVectorSto
     language = _detect_language(ng_file or (ps_files[0] if ps_files else "English_"))
     ng_body = extract_ng_body(ng_text) if ng_text else ""
 
-    # Vision fallback: when the NG text is missing or yields no topic (textless
-    # image-based PDF, or a PS-only group with no NG file), render the pages and
-    # ask the multimodal vision model to read them. Vision fills gaps only — it
+    # Vision fallback: when the NG text is missing or yields no usable topic
+    # (textless image-based PDF, a PS-only group with no NG file, or a PDF whose
+    # labeled fields extract to garbage like "A"/"K"), render the pages and ask
+    # the multimodal vision model to read them. Vision fills gaps only — it
     # never overwrites text-derived values.
     vision_meta = {}
     if vision_llm:
-        if ng_file and (not ng_text or not topic):
+        if ng_file and (not ng_text or not topic or len(topic.strip()) < 2):
             print(f"    👁️  Vision-extracting metadata from {ng_file} ...", flush=True)
             vision_meta = extract_from_images(render_pdf_pages(ng_path), vision_llm)
         elif not ng_file and ps_files:
