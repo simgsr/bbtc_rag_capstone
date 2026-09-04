@@ -8,7 +8,6 @@ that path out of the agent's reply and renders it in the UI. Ranked charts accep
 an optional ``top_n`` (default 15). The module-level ``_*`` constants and
 ``_base_layout`` define the shared visual theme.
 """
-import plotly.express as px
 import plotly.graph_objects as go
 import plotly.io as pio
 import sqlite3

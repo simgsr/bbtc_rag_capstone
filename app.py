@@ -36,7 +36,7 @@ from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).resolve().parent
 from src.storage.chroma_store import SermonVectorStore
-from src.llm import get_llm, get_chat_llm, GROQ_MODEL, GEMINI_MODEL, OLLAMA_CHAT_MODEL
+from src.llm import get_chat_llm, GROQ_MODEL, GEMINI_MODEL, OLLAMA_CHAT_MODEL
 from src.ui_helpers import extract_chart_path, fetch_archive_stats, render_stats_bar
 from src.storage.sqlite_store import SermonRegistry
 from src.tools.sql_tool import make_sql_tool

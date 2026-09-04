@@ -17,7 +17,7 @@ import cloudscraper
 import re
 import unicodedata
 from bs4 import BeautifulSoup
-from datetime import datetime, timezone
+from datetime import datetime
 import fitz  # PyMuPDF
 from docx import Document
 from pptx import Presentation

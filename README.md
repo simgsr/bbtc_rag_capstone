@@ -97,7 +97,7 @@ The pipeline pairs these by date proximity and topic overlap before ingestion.
 | `ingest_bible` | `src/ingestion/bible/bible_ingest.py` | Fetches Scrollmapper JSON + parses EPUBs → `bible_collection` |
 | `BibleEpubParser` | `src/ingestion/bible/epub_parser.py` | Extracts verse-by-verse text from EPUB files |
 | `run_pipeline` | `ingest.py` | Orchestrates full classify → group → extract → embed |
-| `dagster_pipeline.py` | root | Weekly Saturday schedule wrapping `ingest.py` |
+| `dagster_pipeline.py` | root | Weekly Tuesday schedule wrapping `ingest.py` |
 | `app.py` | root | Gradio UI + LangGraph ReAct agent |
 
 ---
@@ -240,7 +240,7 @@ cp .env.example .env
 make dagster   # opens http://localhost:3000
 ```
 
-The Dagster pipeline runs three assets on a weekly Saturday 22:00 schedule:
+The Dagster pipeline runs three assets on a weekly Tuesday 02:00 schedule:
 
 1. **`sermon_scraping`** — scrapes current month's sermons
 2. **`sermon_ingestion`** — incremental ingest of new files

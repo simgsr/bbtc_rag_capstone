@@ -7,8 +7,7 @@ Usage:
   python ingest.py --year 2024  # process only files for a specific year
 """
 
-import argparse, os, re, sys
-from pathlib import Path
+import argparse, os, re
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from src.ingestion.file_classifier import classify_file
@@ -24,7 +23,6 @@ from src.ingestion.vision_extractor import (
 )
 from src.storage.sqlite_store import SermonRegistry
 from src.storage.chroma_store import SermonVectorStore
-from src.storage.normalize_speaker import normalize_speaker
 from src.storage.normalize_book import normalize_book
 from src.llm import get_ingest_llm, get_vision_llm
 

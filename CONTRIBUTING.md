@@ -38,7 +38,7 @@ fallbacks — see `.env.example` and `CLAUDE.md` → "Environment Setup".
 ```
 app.py                 # Gradio UI + LangGraph ReAct agent (entry point)
 ingest.py              # classify → group → extract → summarize → embed
-dagster_pipeline.py    # weekly Saturday schedule wrapping ingest.py
+dagster_pipeline.py    # weekly Tuesday schedule wrapping ingest.py
 src/
   scraper/             # BBTC website scraper (classify-before-download)
   ingestion/           # file classifier, grouper, NG/PS extractors, Bible EPUB parser
@@ -61,7 +61,7 @@ The suite is hermetic — it spins up no LLM, Ollama, or MLX server, so it runs 
 ~1.5s and is safe to run on every change:
 
 ```bash
-python -m pytest            # all 107 tests
+python -m pytest            # all 141 tests
 python -m pytest tests/test_sql_tool.py -v
 ```
 

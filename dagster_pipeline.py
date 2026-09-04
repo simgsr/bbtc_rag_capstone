@@ -1,6 +1,7 @@
 """
 Dagster pipeline — thin wrapper around ingest.py.
-Weekly schedule: Saturday at 22:00 (so new weekend files are ready).
+Weekly schedule: Tuesday at 02:00 local (so the weekend's new sermon files
+are scraped and ingested early in the week).
 
 UI:  DAGSTER_HOME=$(mktemp -d) dagster dev -m dagster_pipeline
 Run: dagster asset materialize --select sermon_ingestion -m dagster_pipeline
@@ -76,8 +77,7 @@ ingestion_job = define_asset_job(
 
 sermon_weekly_schedule = ScheduleDefinition(
     job=ingestion_job,
-    #cron_schedule="0 22 * * 6",  # Saturday 22:00
-    cron_schedule="53 1 * * 2",  # Tuesday 01:30
+    cron_schedule="0 2 * * 2",  # Tuesday 02:00
 )
 
 defs = Definitions(
