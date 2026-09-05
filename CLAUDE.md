@@ -53,7 +53,7 @@ Every weekend BBTC posts two files that form one **sermon unit** (the atomic uni
 - Chat history window: `respond()` passes the last 6 history entries (3 user + 3 assistant exchanges).
 - `OLLAMA_CHAT_MODEL`/`OLLAMA_INGEST_MODEL` auto-detect via `_auto_detect_ollama_model()` in `src/llm.py` if unset (queries `/api/tags`, raises if none found).
 - Embedding init in `SermonVectorStore` is lazy — deferred to first `_upsert_in_batches`/`_search` (reads `EMBED_BACKEND` then), so importing doesn't load the model.
-- `bible_ingest.py` treats `status="skipped"` as `"indexed"` in `_is_indexed()`, so missing EPUBs aren't retried every run.
+- `bible_ingest.py` stores each translation with `status='indexed'` and `_is_indexed()` skips already-indexed versions, so a translation is ingested once; missing EPUBs just never enter the source list (nothing writes `'skipped'`) — drop the file into `data/bibles/` and it's picked up next run.
 - `_run_archive_update` (app.py "Update Archive" button): scrapes current year + incremental ingest as isolated subprocesses. **Freshness caveat:** the header stats bar reads SQLite fresh, but the chat agent's semantic search holds ChromaDB loaded in memory at startup and won't see new chunks until the app restarts. Chroma has no first-class concurrent-multi-process support — treat as an occasional maintenance action.
 
 ## RAG Evaluation Harness

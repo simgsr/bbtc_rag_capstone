@@ -147,7 +147,7 @@ make run     # launches Gradio UI at http://localhost:7860
 3. Scrapes **all sermon years 2015–present** from the BBTC website
 4. Wipes any existing data and rebuilds SQLite + ChromaDB from scratch
 
-> Scraping all years takes ~10–20 minutes. Ingestion takes ~30–60 minutes on Apple Silicon (~800 sermons, MLX + MPS by default).
+> Scraping all years takes ~10–20 minutes. Ingestion takes ~30–60 minutes on Apple Silicon (~800 sermons, Ollama + MPS by default).
 
 ---
 
@@ -246,7 +246,7 @@ The Dagster pipeline runs three assets on a weekly Tuesday 02:00 schedule:
 2. **`sermon_ingestion`** — incremental ingest of new files
 3. **`bible_ingestion`** — checks for new EPUB files in `data/bibles/`
 
-Dagster state is stored in `.dagster/` (committed config, gitignored runtime data). The heartbeat timeout is set to 30 minutes in `.dagster/dagster.yaml` so long-running LLM ingestion jobs don't cause the code server to shut down prematurely.
+Dagster state is stored in `.dagster/` (committed config, gitignored runtime data). The code server's `reload_timeout` is set to 30 minutes (1800s) in `.dagster/dagster.yaml` so long-running LLM ingestion jobs don't cause it to shut down prematurely.
 
 To trigger a manual run or configure `all_years: true` for a full backfill, use the Dagster UI's **Launchpad** and set the asset config:
 
@@ -309,7 +309,7 @@ bible_versions(
 ### ChromaDB (`data/chroma_db/`)
 
 **`sermon_collection`**
-- Chunks: NG body text (800 tokens / 150 overlap) + LLM summary (single chunk) + a `doc_type="metadata"` title chunk per sermon
+- Chunks: NG body text (800 chars / 150 overlap — `RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)`, character-based, not token-based) + LLM summary (single chunk) + a `doc_type="metadata"` title chunk per sermon
 - Metadata: `{sermon_id, doc_type, speaker, date, year, topic, theme, language, key_verse}`
 - Embeddings: BGE-M3 via the configured `EMBED_BACKEND` (default: sentence-transformers on MPS); **cosine** distance (`hnsw:space="cosine"`)
 
@@ -328,7 +328,7 @@ make test
 # or: python -m pytest tests/ -v
 ```
 
-125 tests covering file classification, filename parsing, metadata extraction, verse normalization, sermon grouping, vector retrieval, Bible tools, title-chunk formatting, scraper path safety, UI helpers, and SQLite storage.
+157 tests covering file classification, filename parsing, metadata extraction, verse normalization, sermon grouping, vector retrieval, SQL + chart tool hardening (read-only DB access, injection-shaped input), LLM-server adoption safety, Bible tools, title-chunk formatting, scraper path safety, UI helpers, and SQLite storage.
 
 ---
 
@@ -338,11 +338,16 @@ make test
 .
 ├── app.py                        # Gradio UI + LangGraph agent
 ├── ingest.py                     # Sermon ingestion pipeline
+├── backfill_title_chunks.py      # Idempotent metadata-chunk backfill for pre-change sermons
 ├── dagster_pipeline.py           # Weekly Dagster schedule
 ├── requirements.txt
 ├── .env.example
 ├── Makefile
 ├── LICENSE                       # MIT
+├── evals/
+│   ├── run_eval.py               # Retrieval + groundedness eval harness (python -m evals.run_eval)
+│   ├── golden_set.json           # Verified golden retrieval/groundedness items
+│   └── CLAUDE.md
 ├── src/
 │   ├── ingestion/
 │   │   ├── bible/
@@ -353,7 +358,9 @@ make test
 │   │   ├── ng_extractor.py       # Regex metadata from NG PDFs
 │   │   ├── ps_extractor.py       # Verse extraction from PS filenames
 │   │   ├── sermon_grouper.py     # Pairs NG+PS by date/topic
-│   │   └── speaker_from_filename.py  # Filename-based speaker fallback
+│   │   ├── speaker_from_filename.py  # Filename-based speaker fallback
+│   │   ├── title_chunk.py        # Shared sermon title/metadata chunk builder
+│   │   └── vision_extractor.py   # Multimodal fallback for textless PDFs / PS-only groups
 │   ├── scraper/
 │   │   └── bbtc_scraper.py       # Cloudflare-bypass scraper
 │   ├── storage/
@@ -368,10 +375,12 @@ make test
 │   │   └── viz_tool.py           # Plotly chart tool
 │   ├── llm.py                    # Unified LLM client (MLX / Ollama / Groq / Gemini); manages mlx_lm.server subprocess + cleanup
 │   └── ui_helpers.py             # Gradio rendering helpers
-├── tests/                        # 125 unit tests
+├── tests/                        # 157 unit tests (hermetic — run via `make test`)
 ├── scripts/
 │   ├── migrate_db.py             # One-time COLLATE NOCASE migration (already applied)
-│   └── normalize_books.py        # One-time book-name migration utility
+│   ├── migrate_chroma_cosine.py  # In-place l2 → cosine migration for Chroma collections
+│   ├── normalize_books.py        # One-time book-name migration utility
+│   └── reingest_textless.py      # Re-run vision fallback for textless / PS-only sermons
 └── docs/
     ├── plans/                    # Live implementation plans
     └── archive/                  # Historical design + plans for shipped features
@@ -383,7 +392,7 @@ make test
 
 - **Classify-before-download**: The scraper classifies filenames against a regex before downloading, so handout PDFs are never fetched.
 - **~50% image-based PDFs**: Many PS slide files have no extractable text — verse extraction relies entirely on filename regex parsing.
-- **Fully local by default**: the chat agent runs on Ollama (default `qwen3.8:latest`; the dropdown also lists your other local ≥30B tool-capable models). Ingest LLM runs on Ollama too (same model, so no model-swap) and embeddings run on MPS via `sentence-transformers` — no MLX needed. Gemini/Groq are optional cloud fallbacks.
+- **Fully local by default**: the chat agent runs on Ollama (default `qwen3.8:latest`; the dropdown also lists your other local ≥30B tool-capable models). Ingest LLM runs on Ollama too, on a separate small model (`qwen3:4b` — fast summarisation, distinct from the chat model) with `gemma4:e4b` for textless-PDF vision reads, and embeddings run on MPS via `sentence-transformers` — no MLX needed. Gemini/Groq are optional cloud fallbacks.
 - **NG labeled fields are reliable from 2022+**: Pre-2022 files fall back to `filename_parser.py` heuristics.
 - **Manifest-based pairing**: The scraper writes `_manifest_*.json` files that record which PDFs came from the same sermon page. The grouper reads these first for exact pairing, then falls back to fuzzy date/topic matching.
 

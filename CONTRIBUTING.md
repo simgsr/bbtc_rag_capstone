@@ -18,9 +18,11 @@ cp .env.example .env                 # then fill in optional API keys
 
 Or one-click: `make install` (creates the venv, installs deps, seeds `.env`).
 
-**Platform:** built for Apple Silicon (macOS). The default inference/embedding
-backends use MLX; cloud (Groq/Gemini) and Ollama backends are available as
-fallbacks — see `.env.example` and `CLAUDE.md` → "Environment Setup".
+**Platform:** built for Apple Silicon (macOS). Chat + ingest LLMs default to
+Ollama (chat `qwen3.8:latest`, ingest `qwen3:4b`, vision `gemma4:e4b`), and
+embeddings run locally on MPS via sentence-transformers (`EMBED_BACKEND=st`);
+MLX and cloud (Groq/Gemini) backends are configurable alternatives — see
+`.env.example` and `CLAUDE.md` → "Environment Setup".
 
 ## 2. Everyday commands
 
@@ -43,7 +45,7 @@ src/
   scraper/             # BBTC website scraper (classify-before-download)
   ingestion/           # file classifier, grouper, NG/PS extractors, Bible EPUB parser
   storage/             # SQLite registry, ChromaDB store, name normalizers
-  tools/               # the 5 agent tools (sql, vector, bible, viz)
+  tools/               # the 5 agent tools (sql, vector, viz, bible versions, bible search)
   llm.py               # LLM factory (ingest + chat) — MLX/Ollama/Groq/Gemini
   ui_helpers.py        # pure, unit-tested UI helpers
 tests/                 # pytest suite (hermetic — no services required)
@@ -61,7 +63,7 @@ The suite is hermetic — it spins up no LLM, Ollama, or MLX server, so it runs 
 ~1.5s and is safe to run on every change:
 
 ```bash
-python -m pytest            # all 141 tests
+python -m pytest            # all 157 tests
 python -m pytest tests/test_sql_tool.py -v
 ```
 
