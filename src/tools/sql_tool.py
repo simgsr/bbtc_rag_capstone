@@ -12,8 +12,17 @@ Results are capped at 200 rows; when a result hits exactly 200 the tool appends
 an explicit truncation notice so the model never silently reasons over a partial
 set. Errors return the schema so the model can self-correct and retry.
 """
+import re
 import sqlite3
 from langchain_core.tools import tool
+
+# Schema hint shown to the model on a rejected statement or a query error, so it
+# can self-correct and retry (single source for the guard + error paths).
+_SCHEMA_HINT = (
+    "Tables:\n"
+    "  sermons(sermon_id, date, year, language, speaker, topic, theme, summary, key_verse, ng_file, ps_file, status)\n"
+    "  verses(id, sermon_id, verse_ref, book, chapter, verse_start, verse_end, is_key_verse)"
+)
 
 
 def make_sql_tool(db_path: str):
@@ -44,6 +53,27 @@ def make_sql_tool(db_path: str):
 
         Returns up to 200 rows."""
         try:
+            # Guard 1 — read-only statements only. Allowlisting the first keyword
+            # before the statement reaches sqlite is defense in depth: the safety
+            # must not rest solely on Python sqlite3's single-statement behaviour.
+            stmt = query.strip()
+            if stmt.endswith(";"):
+                stmt = stmt[:-1]  # a trailing semicolon is still one statement
+            first_kw = stmt.split(None, 1)[0].upper() if stmt else ""
+            if first_kw not in ("SELECT", "WITH"):
+                return (
+                    f"SQL Error: only read-only SELECT / WITH statements are allowed "
+                    f"(first keyword '{first_kw or '<empty>'}'). Retry with a SELECT.\n"
+                    f"{_SCHEMA_HINT}"
+                )
+            # Guard 2 — a single statement per call. sqlite3.execute also enforces
+            # this, but reject it explicitly so the model hears the reason and
+            # splits its queries into separate calls.
+            if ";" in stmt:
+                return (
+                    "SQL Error: multiple statements are not allowed — pass one "
+                    f"query at a time.\n{_SCHEMA_HINT}"
+                )
             # Open read-only. `query` is LLM-generated, and the LLM can be
             # prompt-injected via sermon content (stored PDF/summary text) or
             # simply hallucinate — a read-write connection would let a stray
@@ -53,12 +83,15 @@ def make_sql_tool(db_path: str):
             # readonly database" error. uri=True is required for query-string
             # connection params.
             with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
-                cursor = conn.execute(query)
+                # Extra belt: query_only refuses writes at the engine level even if
+                # the mode=ro URI were ever dropped. (A WITH ... DELETE that slips
+                # past Guard 1 is caught here.)
+                conn.execute("PRAGMA query_only = ON")
+                cursor = conn.execute(stmt)
                 columns = [d[0] for d in cursor.description]
                 rows = cursor.fetchmany(200)
                 if not rows:
                     # Fallback logic for speaker suggestions
-                    import re
                     match = re.search(r"speaker\s*(?:LIKE|=)\s*['\"]%?([^'\"]+?)%?['\"]", query, re.IGNORECASE)
                     if match:
                         name = match.group(1)
@@ -87,11 +120,6 @@ def make_sql_tool(db_path: str):
                     )
                 return result
         except Exception as e:
-            return (
-                f"SQL Error: {e}\n"
-                "Tables:\n"
-                "  sermons(sermon_id, date, year, language, speaker, topic, theme, summary, key_verse, ng_file, ps_file, status)\n"
-                "  verses(id, sermon_id, verse_ref, book, chapter, verse_start, verse_end, is_key_verse)"
-            )
+            return f"SQL Error: {e}\n{_SCHEMA_HINT}"
 
     return sql_query_tool

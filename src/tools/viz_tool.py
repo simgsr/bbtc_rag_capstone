@@ -82,8 +82,21 @@ def make_viz_tool(registry):
         top_n: number of results to show for ranked charts (sermons_per_speaker, verses_per_book). Default 15.
         Returns the file path to the saved Plotly JSON."""
 
+        # `top_n` is LLM-supplied (prompt-injectable via stored sermon content, or
+        # simply garbage). Coerce it to an int clamped in [1, 100] BEFORE it ever
+        # reaches the ``LIMIT {top_n}`` f-string interpolation below — a non-int
+        # or absurd value falls back to the documented default.
         try:
-            with sqlite3.connect(db_path) as conn:
+            top_n = int(top_n)
+        except (TypeError, ValueError):
+            top_n = 15
+        top_n = max(1, min(top_n, 100))
+
+        try:
+            # Read-only like sql_tool: the tool never writes, and opening rw hands a
+            # prompt-injected `top_n` (or future interpolated argument) an open write
+            # handle for no benefit. Charts query live data only.
+            with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
 
                 if chart_name == "sermons_per_speaker":
                     rows = conn.execute(
