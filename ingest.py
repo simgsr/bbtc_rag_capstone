@@ -241,6 +241,19 @@ def process_group(group, registry: SermonRegistry, vector_store: SermonVectorSto
     else:
         summary = vision_meta.get("summary")
 
+    # Guard against silent half-indexing: if everything came back empty — no
+    # topic, speaker, theme, key verse, summary, or body text — there is nothing
+    # usable to store. Skip rather than upsert an empty row and mark it indexed.
+    # This MUST run before the force-delete below so a degenerate force re-ingest
+    # preserves a previously-good version, and a never-indexed group stays "new"
+    # (no row → ng_file_indexed() is False) so the next incremental run retries it.
+    if not (topic or speaker or theme or key_verse or summary
+            or (ng_body and ng_body.strip())):
+        print(f"  ⚠️  Skipping {'/'.join(f for f in (ng_file, *ps_files) if f)}: "
+              f"nothing extractable (no topic/speaker/theme/key verse/summary/body).",
+              flush=True)
+        return
+
     sermon_id = _make_sermon_id(date, topic, ng_file or (ps_files[0] if ps_files else "unknown"))
 
     if force:
