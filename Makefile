@@ -6,12 +6,16 @@ PYTHON = $(VENV_DIR)/bin/python
 PIP = $(VENV_DIR)/bin/pip
 YEAR ?= $(shell date +%Y)
 
+# Keep the Mac awake during long-running targets (macOS only; no-op elsewhere)
+UNAME_S := $(shell uname -s)
+CAFFEINATE := $(if $(filter Darwin,$(UNAME_S)),caffeinate -i,)
+
 # Setup entire project (one-click install) — scrapes all years 2015–present then ingests
 setup: install
 	@echo "📥 Scraping all sermon years (2015–present)..."
-	$(PYTHON) src/scraper/bbtc_scraper.py --all
+	$(CAFFEINATE) $(PYTHON) src/scraper/bbtc_scraper.py --all
 	@echo "🧠 Running full ingestion (wipe + rebuild)..."
-	$(PYTHON) ingest.py --wipe
+	$(CAFFEINATE) $(PYTHON) ingest.py --wipe
 	@echo "✅ Setup complete! You can now run the app with 'make run'"
 
 # Install dependencies and setup environment
@@ -29,12 +33,12 @@ install:
 # Scrape a single year (default: current year). Use YEAR=2024 to override.
 scrape:
 	@echo "📥 Scraping sermons for year $(YEAR)..."
-	$(PYTHON) src/scraper/bbtc_scraper.py $(YEAR)
+	$(CAFFEINATE) $(PYTHON) src/scraper/bbtc_scraper.py $(YEAR)
 
 # Ingest sermons into SQLite and ChromaDB
 ingest:
 	@echo "🧠 Ingesting sermons..."
-	$(PYTHON) ingest.py
+	$(CAFFEINATE) $(PYTHON) ingest.py
 
 # Run the Gradio Chat UI
 run:
@@ -44,7 +48,7 @@ run:
 # Run Dagster for weekly scheduling
 dagster:
 	@echo "⏱️ Starting Dagster scheduler..."
-	DAGSTER_HOME=$(PWD)/.dagster $(VENV_DIR)/bin/dagster dev -m dagster_pipeline
+	$(CAFFEINATE) env DAGSTER_HOME=$(PWD)/.dagster $(VENV_DIR)/bin/dagster dev -m dagster_pipeline
 
 # Run tests
 test:
