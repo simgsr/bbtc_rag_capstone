@@ -18,6 +18,7 @@ SIGHUP handlers registered at import time (main thread only — ``signal.signal`
 is a no-op from Gradio worker threads). Ollama model names auto-detect from
 ``localhost:11434`` when unset in ``.env``. See CLAUDE.md → "Notable Quirks".
 """
+import json
 import os
 from typing import Any, List
 from dotenv import load_dotenv
@@ -115,24 +116,38 @@ def _ensure_mlx_server(model: str, host: str = MLX_SERVER_HOST, port: int = MLX_
     import subprocess, sys, time, urllib.request
     base_url = f"http://{host}:{port}/v1"
 
-    def _ping() -> bool:
+    def _serving_model() -> str | None:
+        """Model id the server on `base_url` reports it is actually serving, or
+        None if unreachable. Never *assume* what a foreign process serves — its
+        `/v1/models` response is the only trustworthy source."""
         try:
-            urllib.request.urlopen(f"{base_url}/models", timeout=2)
-            return True
+            with urllib.request.urlopen(f"{base_url}/models", timeout=2) as resp:
+                data = json.loads(resp.read().decode())
+                for m in data.get("data", []):
+                    if m.get("id"):
+                        return m["id"]
         except Exception:
-            return False
+            return None
+        return None
 
-    if _ping():
-        # Reuse only if our server is already serving the requested model.
-        if _mlx_server_model == model:
+    serving = _serving_model()
+    if serving is not None:
+        # Reuse only when the running server actually serves the requested
+        # model — adopted wrong-model completions would come from the wrong
+        # weights. Verified against /models, not our tracked variable.
+        if serving == model:
+            _mlx_server_model = model
             return base_url
         if _mlx_server_proc is not None:
             print(f"🍎 Switching MLX model: {_mlx_server_model} → {model} (restarting server) ...", flush=True)
             _shutdown_mlx_server()
         else:
-            # A server we didn't spawn is up; assume it serves `model` and use it as-is.
-            _mlx_server_model = model
-            return base_url
+            # A server we didn't spawn is up and serving a different model.
+            # Refuse loudly instead of silently adopting it.
+            raise RuntimeError(
+                f"MLX port {port} is already serving '{serving}' but '{model}' was requested. "
+                "Stop the existing server or set MLX_CHAT_MODEL / MLX_SERVER_PORT to match."
+            )
 
     if _mlx_server_proc is not None and _mlx_server_proc.poll() is not None:
         _mlx_server_proc = None
@@ -155,7 +170,7 @@ def _ensure_mlx_server(model: str, host: str = MLX_SERVER_HOST, port: int = MLX_
     startup_timeout = int(os.getenv("MLX_SERVER_STARTUP_TIMEOUT", "1200"))
     deadline = time.time() + startup_timeout
     while time.time() < deadline:
-        if _ping():
+        if _serving_model() == model:
             _mlx_server_model = model
             print("🍎 mlx_lm.server ready", flush=True)
             return base_url
