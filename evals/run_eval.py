@@ -2,8 +2,8 @@
 
 Two evaluation modes, run from a single golden set (``evals/golden_set.json``):
 
-* **Retrieval** — drives ``SermonVectorStore.search_sermons`` directly (the same
-  call the agent's ``search_sermons_tool`` makes) and measures:
+* **Retrieval** — drives ``vector_tool.search_sermons_with_filters`` (the exact
+  helper ``search_sermons_tool`` calls, shared so the two can't drift) and measures:
     - recall@k against ``must_find`` / ``must_find_any`` sermon_ids
     - topic-precision@k (% of top-k whose topic contains ``topic_keyword``)
     - filter-precision@k (% of top-k satisfying a metadata filter, e.g. speaker/year)
@@ -26,7 +26,6 @@ Ollama (or a cloud key) since it invokes the live agent.
 """
 import argparse
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -48,26 +47,6 @@ def _load_golden() -> dict:
 
 # ── Retrieval ────────────────────────────────────────────────────────────────
 
-def _build_where(item: dict) -> dict | None:
-    """Build the Chroma `where` clause EXCLUDING speaker (see vector_tool.py):
-    Chroma metadata filters are exact-match only, but speakers carry titles
-    ("SP Chua Seng Lee"), so a partial speaker filter is applied via post-filter
-    oversampling instead of a `where` clause.
-    """
-    conds = []
-    if item.get("year") is not None:
-        conds.append({"year": {"$eq": item["year"]}})
-    if item.get("min_year") is not None:
-        conds.append({"year": {"$gte": item["min_year"]}})
-    if item.get("max_year") is not None:
-        conds.append({"year": {"$lte": item["max_year"]}})
-    if len(conds) == 1:
-        return conds[0]
-    if len(conds) > 1:
-        return {"$and": conds}
-    return None
-
-
 def _retrieved_sermon_ids(results: list[dict]) -> list[str]:
     ids = []
     for r in results:
@@ -78,20 +57,21 @@ def _retrieved_sermon_ids(results: list[dict]) -> list[str]:
 
 
 def _search_like_the_tool(vs, item: dict, k: int) -> list[dict]:
-    """Replicate search_sermons_tool's filter handling so the eval tests what the
-    agent actually sees: year/min_year/max_year as a Chroma `where`, speaker as
-    oversample + case-insensitive substring post-filter."""
-    where = _build_where(item)
-    fetch_k = max(k, 5)
-    speaker = item.get("speaker")
-    if speaker:
-        fetch_k = max(fetch_k * 4, 20)
-    results = vs.search_sermons(item["query"], k=fetch_k, where=where)
-    if speaker and results:
-        needle = speaker.lower()
-        results = [r for r in results
-                   if needle in ((r.get("metadata") or {}).get("speaker") or "").lower()]
-    return results[:max(k, 5)]
+    """Run the exact path the agent's ``search_sermons_tool`` uses — the shared
+    ``vector_tool.search_sermons_with_filters`` helper — so the eval measures what
+    the agent actually sees: year/min_year/max_year as a Chroma ``where``, speaker
+    as whole-collection oversample + case-insensitive substring post-filter."""
+    from src.tools.vector_tool import search_sermons_with_filters
+    conds = []
+    if item.get("year") is not None:
+        conds.append({"year": {"$eq": item["year"]}})
+    if item.get("min_year") is not None:
+        conds.append({"year": {"$gte": item["min_year"]}})
+    if item.get("max_year") is not None:
+        conds.append({"year": {"$lte": item["max_year"]}})
+    return search_sermons_with_filters(
+        vs, item["query"], k, conditions=conds, speaker=item.get("speaker")
+    )
 
 
 def run_retrieval(verbose: bool = False) -> dict:
